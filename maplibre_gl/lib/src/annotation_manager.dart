@@ -20,6 +20,17 @@ abstract class AnnotationManager<T extends Annotation> {
   /// If disabled the manager offers no interaction for the created symbols
   final bool enableInteraction;
 
+  /// If set, this manager's layers are inserted below the layer with this id
+  /// instead of on top of the style. Lets an app pin its own layers above the
+  /// annotations: add a stable anchor layer on top, point [belowLayerId] at
+  /// it, and anything added above the anchor survives the manager's layer
+  /// rebuilds (which otherwise re-insert at the very top of the style).
+  ///
+  /// A rebuild that runs while the anchor is momentarily absent falls back to
+  /// adding on top (see [_addManagerLayer]) and self-corrects on the next
+  /// rebuild, so a stale id never crashes the manager.
+  String? belowLayerId;
+
   /// implemented to define the layer properties
   List<LayerProperties> get allLayerProperties;
 
@@ -38,12 +49,13 @@ abstract class AnnotationManager<T extends Annotation> {
     this.onDrag,
     this.selectLayer,
     required this.enableInteraction,
+    this.belowLayerId,
   }) : id = getRandomString() {
     for (var i = 0; i < allLayerProperties.length; i++) {
       final layerId = _makeLayerId(i);
       controller.addGeoJsonSource(layerId, buildFeatureCollection([]),
           promoteId: "id");
-      controller.addLayer(layerId, layerId, allLayerProperties[i]);
+      _addManagerLayer(i);
     }
 
     if (onTap != null) {
@@ -52,13 +64,40 @@ abstract class AnnotationManager<T extends Annotation> {
     controller.onFeatureDrag.add(_onDrag);
   }
 
+  /// Adds this manager's layer [layerIndex], honoring [belowLayerId] when set.
+  /// If anchoring fails — e.g. the anchor layer isn't present yet — retries
+  /// unanchored (on top) so a missing anchor never throws; the next rebuild
+  /// re-anchors it.
+  Future<void> _addManagerLayer(int layerIndex) async {
+    final layerId = _makeLayerId(layerIndex);
+    final properties = allLayerProperties[layerIndex];
+    final below = belowLayerId;
+    if (below == null) {
+      await controller.addLayer(layerId, layerId, properties);
+      return;
+    }
+    try {
+      await controller.addLayer(layerId, layerId, properties,
+          belowLayerId: below);
+    } catch (_) {
+      await controller.addLayer(layerId, layerId, properties);
+    }
+  }
+
+  /// Sets [belowLayerId] and rebuilds the manager's layers so they move to
+  /// the new anchor immediately. Pass null to revert to adding on top.
+  Future<void> setBelowLayerId(String? id) async {
+    belowLayerId = id;
+    await _rebuildLayers();
+  }
+
   /// This function can be used to rebuild all layers after their properties
   /// changed
   Future<void> _rebuildLayers() async {
     for (var i = 0; i < allLayerProperties.length; i++) {
       final layerId = _makeLayerId(i);
       await controller.removeLayer(layerId);
-      await controller.addLayer(layerId, layerId, allLayerProperties[i]);
+      await _addManagerLayer(i);
     }
   }
 
