@@ -1,3 +1,5 @@
+import 'dart:js_interop';
+
 import 'package:maplibre_gl_web/src/interop/interop.dart';
 import 'package:maplibre_gl_web/src/style/evaluation_parameters.dart';
 import 'package:maplibre_gl_web/src/style/style_image.dart';
@@ -69,9 +71,11 @@ class Style extends JsObjectWrapper<StyleJsImpl> {
   ///  Add a layer to the map style. The layer will be inserted before the layer with
   ///  ID `before`, or appended if `before` is omitted.
   ///  @param {string} [before] ID of an existing layer to insert before
-  addLayer(dynamic layerObject,
-          [String? before, StyleSetterOptions? options]) =>
-      jsObject.addLayer(layerObject);
+  addLayer(
+    dynamic layerObject, [
+    String? before,
+    StyleSetterOptions? options,
+  ]) => jsObject.addLayer(layerObject);
 
   ///  Moves a layer to a different z-position. The layer will be inserted before the layer with
   ///  ID `before`, or appended if `before` is omitted.
@@ -104,9 +108,12 @@ class Style extends JsObjectWrapper<StyleJsImpl> {
   ///  @returns {*} the layer's filter, if any
   getFilter(String layer) => jsObject.getFilter(layer);
 
-  setLayoutProperty(String layerId, String name, dynamic value,
-          StyleSetterOptions options) =>
-      jsObject.setLayoutProperty(layerId, name, value, options.jsObject);
+  setLayoutProperty(
+    String layerId,
+    String name,
+    dynamic value,
+    StyleSetterOptions options,
+  ) => jsObject.setLayoutProperty(layerId, name, value, options.jsObject);
 
   ///  Get a layout property's value from a given layer
   ///  @param {string} layerId the layer to inspect
@@ -115,9 +122,12 @@ class Style extends JsObjectWrapper<StyleJsImpl> {
   getLayoutProperty(String layerId, String name) =>
       jsObject.getLayoutProperty(layerId, name);
 
-  setPaintProperty(String layerId, String name, dynamic value,
-          StyleSetterOptions options) =>
-      jsObject.setPaintProperty(layerId, name, value, options.jsObject);
+  setPaintProperty(
+    String layerId,
+    String name,
+    dynamic value,
+    StyleSetterOptions options,
+  ) => jsObject.setPaintProperty(layerId, name, value, options.jsObject);
 
   getPaintProperty(String layer, String name) =>
       jsObject.getPaintProperty(layer, name);
@@ -137,8 +147,8 @@ class Style extends JsObjectWrapper<StyleJsImpl> {
   querySourceFeatures(String sourceID, dynamic params) =>
       jsObject.querySourceFeatures(sourceID, params);
 
-  addSourceType(String name, dynamic sourceType, Function callback) =>
-      jsObject.addSourceType(name, sourceType, callback);
+  addSourceType(String name, dynamic sourceType, void Function() callback) =>
+      jsObject.addSourceType(name, sourceType, callback.toJS as JSFunction);
 
   getLight() => jsObject.getLight();
 
@@ -147,27 +157,39 @@ class Style extends JsObjectWrapper<StyleJsImpl> {
 
   // Callbacks from web workers
 
-  getImages(String mapId, dynamic params, Function callback) =>
-      jsObject.getImages(mapId, params, callback);
+  getImages(String mapId, dynamic params, void Function() callback) =>
+      jsObject.getImages(mapId, params, callback.toJS as JSFunction);
 
-  getGlyphs(String mapId, dynamic params, Function callback) =>
-      jsObject.getGlyphs(mapId, params, callback);
+  getGlyphs(String mapId, dynamic params, void Function() callback) =>
+      jsObject.getGlyphs(mapId, params, callback.toJS as JSFunction);
 
-  getResource(String mapId, RequestParameters params, Function callback) =>
-      jsObject.getResource(mapId, params.jsObject, callback);
+  getResource(
+    String mapId,
+    RequestParameters params,
+    void Function() callback,
+  ) =>
+      jsObject.getResource(mapId, params.jsObject, callback.toJS as JSFunction);
 
   /// Creates a new Style from a [jsObject].
   Style.fromJsObject(super.jsObject) : super.fromJsObject();
 
-  List<dynamic> get layers => jsObject.layers;
+  /// Returns the list of layers in the style
+  List<StyleLayerJsImpl> get layers => jsObject.layers.toDart;
+
+  /// Returns the sources object from the style
+  JSObject? get sources => jsObject.sources;
 }
 
 class StyleFunction extends JsObjectWrapper<StyleFunctionJsImpl> {
   factory StyleFunction({
     dynamic base,
     dynamic stops,
-  }) =>
-      StyleFunction.fromJsObject(StyleFunctionJsImpl(base: base, stops: stops));
+  }) {
+    final jsImpl = StyleFunctionJsImpl();
+    if (base != null) jsImpl.base = base.toJS;
+    if (stops != null) jsImpl.stops = stops.toJS;
+    return StyleFunction.fromJsObject(jsImpl);
+  }
 
   /// Creates a new StyleFunction from a [jsObject].
   StyleFunction.fromJsObject(super.jsObject) : super.fromJsObject();

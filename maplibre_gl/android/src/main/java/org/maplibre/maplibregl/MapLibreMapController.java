@@ -20,6 +20,8 @@ import android.os.Build;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Pair;
+import android.content.ComponentCallbacks2;
+import android.content.res.Configuration;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.TextureView;
@@ -77,13 +79,18 @@ import org.maplibre.android.style.layers.PropertyValue;
 import org.maplibre.android.style.layers.RasterLayer;
 import org.maplibre.android.style.layers.SymbolLayer;
 import org.maplibre.android.style.sources.CustomGeometrySource;
+import org.maplibre.android.style.sources.GeoJsonOptions;
 import org.maplibre.android.style.sources.GeoJsonSource;
 import org.maplibre.android.style.sources.ImageSource;
 import org.maplibre.android.style.sources.Source;
 import org.maplibre.android.style.sources.VectorSource;
 import org.maplibre.geojson.Feature;
 import org.maplibre.geojson.FeatureCollection;
+import org.maplibre.android.net.ConnectivityReceiver;
+import org.maplibre.android.snapshotter.MapSnapshot;
+import org.maplibre.android.snapshotter.MapSnapshotter;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -106,6 +113,7 @@ import io.flutter.plugin.platform.PlatformView;
 @SuppressLint("MissingPermission")
 final class MapLibreMapController
     implements DefaultLifecycleObserver,
+        ComponentCallbacks2,
         MapLibreMap.OnCameraIdleListener,
         MapLibreMap.OnCameraMoveListener,
         MapLibreMap.OnCameraMoveStartedListener,
@@ -121,7 +129,7 @@ final class MapLibreMapController
   private final int id;
   private final MethodChannel methodChannel;
   private final MapLibreMapsPlugin.LifecycleProvider lifecycleProvider;
-  private final float density;
+  private float density;
   private final Context context;
   private final String styleStringInitial;
   /**
@@ -138,6 +146,8 @@ final class MapLibreMapController
   private LocationEngineFactory myLocationEngineFactory = new LocationEngineFactory();
   private boolean disposed = false;
   private boolean dragEnabled = true;
+  private boolean featureTapsTriggersMapClick = false;
+  private boolean mapViewStarted = false;
   private MethodChannel.Result mapReadyResult;
   private LocationComponent locationComponent = null;
   private LocationEngineCallback<LocationEngineResult> locationEngineCallback = null;
@@ -147,6 +157,7 @@ final class MapLibreMapController
 
   private LatLng dragOrigin;
   private LatLng dragPrevious;
+  private MapSnapshotter activeSnapshotter;
 
   private Set<String> interactiveFeatureLayerIds;
   private Map<String, FeatureCollection> addedFeaturesByLayer;
@@ -167,7 +178,7 @@ final class MapLibreMapController
           updateMyLocationEnabled();
 
           if (null != bounds) {
-            mapLibreMap.setLatLngBoundsForCameraTarget(bounds);
+            setCameraTargetBounds(bounds);
           }
 
           mapLibreMap.addOnMapClickListener(MapLibreMapController.this);
@@ -184,11 +195,14 @@ final class MapLibreMapController
       MapLibreMapsPlugin.LifecycleProvider lifecycleProvider,
       MapLibreMapOptions options,
       String styleStringInitial,
-      boolean dragEnabled) {
+      boolean dragEnabled,
+      boolean featureTapsTriggersMapClick
+  ) {
     MapLibreUtils.getMapLibre(context);
     this.id = id;
     this.context = context;
     this.dragEnabled = dragEnabled;
+    this.featureTapsTriggersMapClick = featureTapsTriggersMapClick;
     this.styleStringInitial = styleStringInitial;
     this.mapViewContainer = new FrameLayout(context);
     this.mapView = new MapView(context, options);
@@ -212,6 +226,7 @@ final class MapLibreMapController
 
   void init() {
     lifecycleProvider.getLifecycle().addObserver(this);
+    context.registerComponentCallbacks(this);
     mapView.getMapAsync(this);
   }
 
@@ -238,6 +253,11 @@ final class MapLibreMapController
     mapLibreMap.addOnCameraMoveStartedListener(this);
     mapLibreMap.addOnCameraMoveListener(this);
     mapLibreMap.addOnCameraIdleListener(this);
+
+    // Apply camera target bounds if set during initialization
+    if (bounds != null) {
+      mapLibreMap.setLatLngBoundsForCameraTarget(bounds);
+    }
 
     if (androidGesturesManager != null) {
       androidGesturesManager.setMoveGestureListener(new MoveGestureListener());
@@ -338,6 +358,13 @@ final class MapLibreMapController
     clearLocationComponentLayer();
     styleString = styleString.trim();
 
+    // Prevent race conditions: invalidate current style reference & interactive layers
+    // Old Style instances become invalid immediately after setStyle is called.
+    this.style = null;
+    if (interactiveFeatureLayerIds != null) {
+      interactiveFeatureLayerIds.clear();
+    }
+
     // Check if json, url, absolute path or asset path:
     if (styleString == null || styleString.isEmpty()) {
       Log.e(TAG, "setStyleString - string empty or null");
@@ -397,13 +424,17 @@ final class MapLibreMapController
   }
 
   String getLastLayerOnStyle(Style style) {
-    if (style != null) {
-      final List<Layer> layers = style.getLayers();
-
-      if (layers.size() > 0) {
-        return layers.get(layers.size() - 1).getId();
-      }
+    if (style == null) return null;
+    if (!style.isFullyLoaded()) {
+        Log.d(TAG, "getLastLayerOnStyle: style not fully loaded yet");
+        return null;
     }
+    
+    final List<Layer> layers = style.getLayers();
+    if (layers.size() > 0) {
+      return layers.get(layers.size() - 1).getId();
+    }
+
     return null;
   }
 
@@ -451,45 +482,110 @@ final class MapLibreMapController
     methodChannel.invokeMethod("map#onUserLocationUpdated", arguments);
   }
 
-  private void addGeoJsonSource(String sourceName, String source) {
-    FeatureCollection featureCollection = FeatureCollection.fromJson(source);
-    GeoJsonSource geoJsonSource = new GeoJsonSource(sourceName, featureCollection);
-    // Prevent unbounded growth - remove old entry if exists
-    if (addedFeaturesByLayer.containsKey(sourceName)) {
-      addedFeaturesByLayer.remove(sourceName);
-    }
-    addedFeaturesByLayer.put(sourceName, featureCollection);
+  private FeatureCollection parseGeoJsonToFeatureCollection(String geojson) {
+    JsonElement jsonElement = JsonParser.parseString(geojson);
+    String type = jsonElement.getAsJsonObject().get("type").getAsString();
 
-    style.addSource(geoJsonSource);
+    if ("FeatureCollection".equals(type)) {
+      return FeatureCollection.fromJson(geojson);
+    } else if ("Feature".equals(type)) {
+      Feature feature = Feature.fromJson(geojson);
+      return FeatureCollection.fromFeatures(new Feature[]{ feature });
+    }
+
+    return null;
+  }
+
+  private void addGeoJsonSource(String sourceName, String source) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addGeoJsonSource: style not ready, skipping");
+      return;
+    }
+
+    // Check if source already exists to prevent CannotAddSourceException
+    // which can lead to native crashes
+    if (style.getSource(sourceName) != null) {
+      return;
+    }
+
+    try {
+      FeatureCollection featureCollection = parseGeoJsonToFeatureCollection(source);
+      if (featureCollection == null) {
+        Log.w(TAG, "addGeoJsonSource: unsupported GeoJSON type, skipping");
+        return;
+      }
+
+      // synchronousUpdate causes a texture atlas slot-reuse bug in MapLibre Native Android SDK
+      // that silently discards icons registered via addImage() in the same render frame.
+      // Disabled unconditionally until upstream maplibre-native#4326 is fixed.
+      GeoJsonOptions options = new GeoJsonOptions().withSynchronousUpdate(false);
+      GeoJsonSource geoJsonSource = new GeoJsonSource(sourceName, featureCollection, options);
+      addedFeaturesByLayer.put(sourceName, featureCollection);
+
+      style.addSource(geoJsonSource);
+    } catch (Exception e) {
+      Log.e(TAG, "addGeoJsonSource: error adding source '" + sourceName + "'", e);
+    }
   }
 
   private void setGeoJsonSource(String sourceName, String geojson) {
-    FeatureCollection featureCollection = FeatureCollection.fromJson(geojson);
-    GeoJsonSource geoJsonSource = style.getSourceAs(sourceName);
-    addedFeaturesByLayer.put(sourceName, featureCollection);
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "setGeoJsonSource: style not ready, skipping update");
+      return;
+    }
 
-    geoJsonSource.setGeoJson(featureCollection);
-  }
-
-  private void setGeoJsonFeature(String sourceName, String geojsonFeature) {
-    Feature feature = Feature.fromJson(geojsonFeature);
-    FeatureCollection featureCollection = addedFeaturesByLayer.get(sourceName);
-    GeoJsonSource geoJsonSource = style.getSourceAs(sourceName);
-    if (featureCollection != null && geoJsonSource != null) {
-      final List<Feature> features = featureCollection.features();
-      for (int i = 0; i < features.size(); i++) {
-        final String id = features.get(i).id();
-        if (id.equals(feature.id())) {
-          features.set(i, feature);
-          break;
-        }
+    try {
+      FeatureCollection featureCollection = parseGeoJsonToFeatureCollection(geojson);
+      if (featureCollection == null) {
+        Log.w(TAG, "setGeoJsonSource: unsupported GeoJSON type, skipping update");
+        return;
       }
 
+      GeoJsonSource geoJsonSource = style.getSourceAs(sourceName);
+      if (geoJsonSource == null) {
+        Log.w(TAG, "setGeoJsonSource: source '" + sourceName + "' not found, skipping update");
+        return;
+      }
+
+      addedFeaturesByLayer.put(sourceName, featureCollection);
       geoJsonSource.setGeoJson(featureCollection);
+    } catch (Exception e) {
+      Log.e(TAG, "setGeoJsonSource: error updating source '" + sourceName + "'", e);
     }
   }
 
-  private void addSymbolLayer(
+  private void setGeoJsonFeature(String sourceName, String geojsonFeature) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "setGeoJsonFeature: style not ready, skipping update");
+      return;
+    }
+
+    try {
+      Feature feature = Feature.fromJson(geojsonFeature);
+      FeatureCollection featureCollection = addedFeaturesByLayer.get(sourceName);
+      GeoJsonSource geoJsonSource = style.getSourceAs(sourceName);
+
+      if (featureCollection != null && geoJsonSource != null) {
+        final String featureId = feature.id();
+        final List<Feature> features = featureCollection.features();
+        
+        if (featureId != null && features != null) {
+          for (int i = 0; i < features.size(); i++) {
+            if (featureId.equals(features.get(i).id())) {
+              features.set(i, feature);
+              break;
+            }
+          }
+        }
+
+        geoJsonSource.setGeoJson(featureCollection);
+      }
+    } catch (Exception e) {
+      Log.e(TAG, "setGeoJsonFeature: error updating feature in source '" + sourceName + "'", e);
+    }
+  }
+
+  private boolean addSymbolLayer(
       String layerName,
       String sourceName,
       String belowLayerId,
@@ -499,6 +595,10 @@ final class MapLibreMapController
       PropertyValue[] properties,
       boolean enableInteraction,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addSymbolLayer: style not ready, skipping");
+      return false;
+    }
     SymbolLayer symbolLayer = new SymbolLayer(layerName, sourceName);
     symbolLayer.setProperties(properties);
     if (sourceLayer != null) {
@@ -521,9 +621,10 @@ final class MapLibreMapController
     if (enableInteraction) {
       interactiveFeatureLayerIds.add(layerName);
     }
+    return true;
   }
 
-  private void addLineLayer(
+  private boolean addLineLayer(
       String layerName,
       String sourceName,
       String belowLayerId,
@@ -533,6 +634,10 @@ final class MapLibreMapController
       PropertyValue[] properties,
       boolean enableInteraction,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addLineLayer: style not ready, skipping");
+      return false;
+    }
     LineLayer lineLayer = new LineLayer(layerName, sourceName);
     lineLayer.setProperties(properties);
     if (sourceLayer != null) {
@@ -555,9 +660,10 @@ final class MapLibreMapController
     if (enableInteraction) {
       interactiveFeatureLayerIds.add(layerName);
     }
+    return true;
   }
 
-  private void addFillLayer(
+  private boolean addFillLayer(
       String layerName,
       String sourceName,
       String belowLayerId,
@@ -567,6 +673,10 @@ final class MapLibreMapController
       PropertyValue[] properties,
       boolean enableInteraction,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addFillLayer: style not ready, skipping");
+      return false;
+    }
     FillLayer fillLayer = new FillLayer(layerName, sourceName);
     fillLayer.setProperties(properties);
     if (sourceLayer != null) {
@@ -589,9 +699,10 @@ final class MapLibreMapController
     if (enableInteraction) {
       interactiveFeatureLayerIds.add(layerName);
     }
+    return true;
   }
 
-  private void addFillExtrusionLayer(
+  private boolean addFillExtrusionLayer(
           String layerName,
           String sourceName,
           String belowLayerId,
@@ -601,6 +712,10 @@ final class MapLibreMapController
           PropertyValue[] properties,
           boolean enableInteraction,
           Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addFillExtrusionLayer: style not ready, skipping");
+      return false;
+    }
     FillExtrusionLayer fillLayer = new FillExtrusionLayer(layerName, sourceName);
     fillLayer.setProperties(properties);
     if (sourceLayer != null) {
@@ -623,9 +738,10 @@ final class MapLibreMapController
     if (enableInteraction) {
       interactiveFeatureLayerIds.add(layerName);
     }
+    return true;
   }
 
-  private void addCircleLayer(
+  private boolean addCircleLayer(
       String layerName,
       String sourceName,
       String belowLayerId,
@@ -635,6 +751,10 @@ final class MapLibreMapController
       PropertyValue[] properties,
       boolean enableInteraction,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addCircleLayer: style not ready, skipping");
+      return false;
+    }
     CircleLayer circleLayer = new CircleLayer(layerName, sourceName);
     circleLayer.setProperties(properties);
     if (sourceLayer != null) {
@@ -657,6 +777,7 @@ final class MapLibreMapController
     if (enableInteraction) {
       interactiveFeatureLayerIds.add(layerName);
     }
+    return true;
   }
 
   private Expression parseFilter(String filter) {
@@ -665,7 +786,7 @@ final class MapLibreMapController
     return filterJsonElement.isJsonNull() ? null : Expression.Converter.convert(filterJsonElement);
   }
 
-  private void addRasterLayer(
+  private boolean addRasterLayer(
       String layerName,
       String sourceName,
       Float minZoom,
@@ -673,6 +794,10 @@ final class MapLibreMapController
       String belowLayerId,
       PropertyValue[] properties,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addRasterLayer: style not ready, skipping");
+      return false;
+    }
     RasterLayer layer = new RasterLayer(layerName, sourceName);
     layer.setProperties(properties);
     if (minZoom != null) {
@@ -686,9 +811,10 @@ final class MapLibreMapController
     } else {
       style.addLayer(layer);
     }
+    return true;
   }
 
-  private void addHillshadeLayer(
+  private boolean addHillshadeLayer(
       String layerName,
       String sourceName,
       Float minZoom,
@@ -696,6 +822,10 @@ final class MapLibreMapController
       String belowLayerId,
       PropertyValue[] properties,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addHillshadeLayer: style not ready, skipping");
+      return false;
+    }
     HillshadeLayer layer = new HillshadeLayer(layerName, sourceName);
     layer.setProperties(properties);
     if (minZoom != null) {
@@ -709,9 +839,10 @@ final class MapLibreMapController
     } else {
       style.addLayer(layer);
     }
+    return true;
   }
 
-  private void addHeatmapLayer(
+  private boolean addHeatmapLayer(
       String layerName,
       String sourceName,
       Float minZoom,
@@ -719,6 +850,10 @@ final class MapLibreMapController
       String belowLayerId,
       PropertyValue[] properties,
       Expression filter) {
+    if (style == null || !style.isFullyLoaded()) {
+      Log.w(TAG, "addHeatmapLayer: style not ready, skipping");
+      return false;
+    }
     HeatmapLayer layer = new HeatmapLayer(layerName, sourceName);
     layer.setProperties(properties);
     if (minZoom != null) {
@@ -732,25 +867,37 @@ final class MapLibreMapController
     } else {
       style.addLayer(layer);
     }
+    return true;
   }
 
   private Pair<Feature, String> firstFeatureOnLayers(RectF in) {
-    if (style != null) {
-      final List<Layer> layers = style.getLayers();
-      final List<String> layersInOrder = new ArrayList<String>();
-      for (Layer layer : layers) {
-        String id = layer.getId();
-        if (interactiveFeatureLayerIds.contains(id)) layersInOrder.add(id);
-      }
-      Collections.reverse(layersInOrder);
-
-      for (String id : layersInOrder) {
-        List<Feature> features = mapLibreMap.queryRenderedFeatures(in, id);
-        if (!features.isEmpty()) {
-          return new Pair<Feature, String>(features.get(0), id);
-        }
+    if (style == null) return null;
+    if (!style.isFullyLoaded()) {
+        Log.d(TAG, "firstFeatureOnLayers: style not fully loaded yet");
+        return null;
+    }
+    
+    final List<Layer> layers;
+    try {
+      layers = style.getLayers();
+    } catch (IllegalStateException ex) {
+      // Style object is stale (a new style is loading/has loaded). Skip querying.
+      Log.w(TAG, "firstFeatureOnLayers: Style.getLayers() failed: " + ex.getMessage());
+      return null;
+    }
+    final List<String> layersInOrder = new ArrayList<String>();
+    for (Layer layer : layers) {
+      String id = layer.getId();
+      if (interactiveFeatureLayerIds.contains(id)) layersInOrder.add(id);
+    }
+    Collections.reverse(layersInOrder);
+    for (String id : layersInOrder) {
+      List<Feature> features = mapLibreMap.queryRenderedFeatures(in, id);
+      if (!features.isEmpty()) {
+        return new Pair<Feature, String>(features.get(0), id);
       }
     }
+    
     return null;
   }
 
@@ -997,6 +1144,185 @@ final class MapLibreMapController
           result.success(false);
           break;
         }
+      case "map#setMaximumFps":
+        {
+          final int fps = call.argument("fps");
+          if (mapView != null) {
+            mapView.setMaximumFps(fps);
+          }
+          result.success(null);
+          break;
+        }
+      case "map#forceOnlineMode":
+        {
+          // Force online mode by setting connectivity to true
+          if (mapView != null) {
+            ConnectivityReceiver.instance(mapView.getContext()).setConnected(true);
+          }
+          result.success(null);
+          break;
+        }
+      case "camera#ease":
+        {
+          final CameraUpdate cameraUpdate = Convert.toCameraUpdate(call.argument("cameraUpdate"), mapLibreMap, density);
+          final Integer duration = call.argument("duration");
+          final String interpolationStr = call.argument("interpolation");
+
+          // MapLibre Android's easeCamera only exposes a boolean:
+          //   false = linear (constant velocity)
+          //   true  = default ease-in/ease-out
+          // Custom timing curves (easeOut, fastOutLinearIn) are not supported
+          // natively, so any non-"linear" value falls back to eased. This
+          // cross-platform caveat is documented on CameraAnimationInterpolation.
+          final boolean easingInterpolator = !"linear".equals(interpolationStr);
+
+          final OnCameraMoveFinishedListener onCameraMoveFinishedListener =
+              new OnCameraMoveFinishedListener() {
+                @Override
+                public void onFinish() {
+                  super.onFinish();
+                  result.success(true);
+                }
+
+                @Override
+                public void onCancel() {
+                  super.onCancel();
+                  result.success(false);
+                }
+              };
+
+          if (cameraUpdate != null && duration != null && duration > 0) {
+            mapLibreMap.easeCamera(cameraUpdate, duration, easingInterpolator, onCameraMoveFinishedListener);
+          } else if (cameraUpdate != null) {
+            mapLibreMap.easeCamera(cameraUpdate, onCameraMoveFinishedListener);
+          } else {
+            result.success(false);
+          }
+          break;
+        }
+      case "map#queryCameraPosition":
+        {
+          result.success(Convert.toJson(mapLibreMap.getCameraPosition()));
+          break;
+        }
+      case "map#editGeoJsonSource":
+        {
+          boolean ret = false;
+          if (mapLibreMap != null) {
+            Style style = mapLibreMap.getStyle();
+            if (style != null) {
+              try {
+                GeoJsonSource source = style.getSourceAs(call.argument("id"));
+                if (source != null) {
+                  source.setGeoJson((String)call.argument("data"));
+                  ret = true;
+                }
+              } catch (Exception e) {
+                Log.e(TAG, "editGeoJsonSource: error updating source '" + call.argument("id") + "'", e);
+              }
+            }
+          }
+          Map<String, Boolean> reply = new HashMap<>();
+          reply.put("result", ret);
+          result.success(reply);
+          break;
+        }
+      case "map#editGeoJsonUrl":
+        {
+          boolean ret = false;
+          if (mapLibreMap != null) {
+            Style style = mapLibreMap.getStyle();
+            if (style != null) {
+              try {
+                GeoJsonSource source = style.getSourceAs(call.argument("id"));
+                if (source != null) {
+                  source.setUrl((String)call.argument("url"));
+                  ret = true;
+                }
+              } catch (Exception e) {
+                Log.e(TAG, "editGeoJsonUrl: error updating source '" + call.argument("id") + "'", e);
+              }
+            }
+          }
+          Map<String, Boolean> reply = new HashMap<>();
+          reply.put("result", ret);
+          result.success(reply);
+          break;
+        }
+      case "map#setLayerFilter":
+        {
+          boolean ret = false;
+          if (mapLibreMap != null) {
+            Style style = mapLibreMap.getStyle();
+            if (style != null) {
+                try {
+                    Layer layer = style.getLayer(call.argument("id"));
+                    if (layer != null) {
+                        String filter = call.argument("filter");
+                        if (filter != null) {
+                            Expression expression = Expression.raw(filter);
+                            if (expression != null) {
+                              if (layer instanceof LineLayer) {
+                                ((LineLayer)layer).setFilter(expression);
+                                ret = true;
+                              } else if (layer instanceof FillLayer) {
+                                ((FillLayer)layer).setFilter(expression);
+                                ret = true;
+                              } else if (layer instanceof SymbolLayer) {
+                                ((SymbolLayer)layer).setFilter(expression);
+                                ret = true;
+                              }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+          }
+          Map<String, Boolean> reply = new HashMap<>();
+          reply.put("result", ret);
+          result.success(reply);
+          break;
+        }
+      case "map#getStyle":
+        {
+          Map<String, Object> reply = new HashMap<>();
+          boolean ret = false;
+          if (mapLibreMap != null) {
+            Style style = mapLibreMap.getStyle();
+            if (style != null) {
+              try {
+                String json = style.getJson();
+                reply.put("json", json);
+                ret = true;
+              } catch (Exception e) {}
+            }
+          }
+          reply.put("result", ret);
+          result.success(reply);
+          break;
+        }
+      case "map#setCustomHeaders":
+        {
+          if (mapLibreMap != null) {
+            HashMap<String, String> headers = (HashMap<String, String>)call.argument("headers");
+            List<String> filter = (List<String>)call.argument("filter");
+            MapLibreCustomHttpInterceptor.setCustomHeaders(headers, filter, result);
+          } else {
+            result.success(null);
+          }
+          break;
+        }
+      case "map#getCustomHeaders":
+        {
+          if (mapLibreMap != null) {
+            result.success(MapLibreCustomHttpInterceptor.CustomHeaders);
+          } else {
+            result.success(null);
+          }
+          break;
+        }
       case "map#invalidateAmbientCache":
         {
           OfflineManager fileSource = OfflineManager.Companion.getInstance(context);
@@ -1072,7 +1398,7 @@ final class MapLibreMapController
 
           Expression filterExpression = parseFilter(filter);
 
-          addSymbolLayer(
+          if (!addSymbolLayer(
               layerId,
               sourceId,
               belowLayerId,
@@ -1081,7 +1407,10 @@ final class MapLibreMapController
               maxzoom != null ? maxzoom.floatValue() : null,
               properties,
               enableInteraction,
-              filterExpression);
+              filterExpression)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1102,7 +1431,7 @@ final class MapLibreMapController
 
           Expression filterExpression = parseFilter(filter);
 
-          addLineLayer(
+          if (!addLineLayer(
               layerId,
               sourceId,
               belowLayerId,
@@ -1111,7 +1440,10 @@ final class MapLibreMapController
               maxzoom != null ? maxzoom.floatValue() : null,
               properties,
               enableInteraction,
-              filterExpression);
+              filterExpression)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1120,11 +1452,12 @@ final class MapLibreMapController
         case "layer#setProperties": {
           final String layerId = call.argument("layerId");
 
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
 
           Layer layer = style.getLayer(layerId);
@@ -1177,7 +1510,7 @@ final class MapLibreMapController
 
           Expression filterExpression = parseFilter(filter);
 
-          addFillLayer(
+          if (!addFillLayer(
               layerId,
               sourceId,
               belowLayerId,
@@ -1186,7 +1519,10 @@ final class MapLibreMapController
               maxzoom != null ? maxzoom.floatValue() : null,
               properties,
               enableInteraction,
-              filterExpression);
+              filterExpression)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1208,7 +1544,7 @@ final class MapLibreMapController
 
         Expression filterExpression = parseFilter(filter);
 
-        addFillExtrusionLayer(
+        if (!addFillExtrusionLayer(
                 layerId,
                 sourceId,
                 belowLayerId,
@@ -1217,7 +1553,10 @@ final class MapLibreMapController
                 maxzoom != null ? maxzoom.floatValue() : null,
                 properties,
                 enableInteraction,
-                filterExpression);
+                filterExpression)) {
+          result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+          break;
+        }
         updateLocationComponentLayer();
 
         result.success(null);
@@ -1238,7 +1577,7 @@ final class MapLibreMapController
 
           Expression filterExpression = parseFilter(filter);
 
-          addCircleLayer(
+          if (!addCircleLayer(
               layerId,
               sourceId,
               belowLayerId,
@@ -1247,7 +1586,10 @@ final class MapLibreMapController
               maxzoom != null ? maxzoom.floatValue() : null,
               properties,
               enableInteraction,
-              filterExpression);
+              filterExpression)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1262,14 +1604,17 @@ final class MapLibreMapController
           final Double maxzoom = call.argument("maxzoom");
           final PropertyValue[] properties =
               LayerPropertyConverter.interpretRasterLayerProperties(call.argument("properties"));
-          addRasterLayer(
+          if (!addRasterLayer(
               layerId,
               sourceId,
               minzoom != null ? minzoom.floatValue() : null,
               maxzoom != null ? maxzoom.floatValue() : null,
               belowLayerId,
               properties,
-              null);
+              null)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1284,14 +1629,17 @@ final class MapLibreMapController
           final Double maxzoom = call.argument("maxzoom");
           final PropertyValue[] properties =
               LayerPropertyConverter.interpretHillshadeLayerProperties(call.argument("properties"));
-          addHillshadeLayer(
+          if (!addHillshadeLayer(
               layerId,
               sourceId,
               minzoom != null ? minzoom.floatValue() : null,
               maxzoom != null ? maxzoom.floatValue() : null,
               belowLayerId,
               properties,
-              null);
+              null)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1306,14 +1654,17 @@ final class MapLibreMapController
           final Double maxzoom = call.argument("maxzoom");
           final PropertyValue[] properties =
               LayerPropertyConverter.interpretHeatmapLayerProperties(call.argument("properties"));
-          addHeatmapLayer(
+          if (!addHeatmapLayer(
               layerId,
               sourceId,
               minzoom != null ? minzoom.floatValue() : null,
               maxzoom != null ? maxzoom.floatValue() : null,
               belowLayerId,
               properties,
-              null);
+              null)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           updateLocationComponentLayer();
 
           result.success(null);
@@ -1339,47 +1690,70 @@ final class MapLibreMapController
                       reply.put("altitude", lastLocation.getAltitude());
                       result.success(reply);
                     } else {
-                      result.error("", "", null); // ???
+                      result.error("LOCATION_UNAVAILABLE",
+                          "Last location is not available", null);
                     }
                   }
 
                   @Override
                   public void onFailure(@NonNull Exception exception) {
-                    result.error("", "", null); // ???
+                    result.error("LOCATION_ENGINE_FAILURE",
+                        "Failed to get last location: " + exception.getMessage(), null);
                   }
                 });
           } else {
-            result.error(
-                "LOCATION DISABLED",
-                "Location is disabled or location component is unavailable",
-                null);
+            result.error("LOCATION_DISABLED",
+                "Location is disabled or location component is unavailable", null);
           }
           break;
         }
       case "style#addImage":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
+          }
+          BitmapFactory.Options options = new BitmapFactory.Options();
+          options.inScaled = false;
+          options.inDensity = 0;
+          options.inTargetDensity = 0;
+          Bitmap bitmap = BitmapFactory.decodeByteArray(
+              call.argument("bytes"),
+              0,
+              call.argument("length"),
+              options);
+          if (bitmap == null) {
+            result.error("INVALID_IMAGE", "Failed to decode image bytes.", null);
+            break;
           }
           style.addImage(
               call.argument("name"),
-              BitmapFactory.decodeByteArray(call.argument("bytes"), 0, call.argument("length")),
+              bitmap,
               call.argument("sdf"));
           result.success(null);
           break;
         }
       case "style#addImageSource":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
           List<LatLng> coordinates = Convert.toLatLngList(call.argument("coordinates"), false);
+          Bitmap addSourceBitmap = BitmapFactory.decodeByteArray(
+              call.argument("bytes"),
+              0,
+              call.argument("length"));
+          if (addSourceBitmap == null) {
+            result.error("INVALID_IMAGE", "Failed to decode image bytes.", null);
+            break;
+          }
           style.addSource(
               new ImageSource(
                   call.argument("imageSourceId"),
@@ -1388,18 +1762,18 @@ final class MapLibreMapController
                       coordinates.get(1),
                       coordinates.get(2),
                       coordinates.get(3)),
-                  BitmapFactory.decodeByteArray(
-                      call.argument("bytes"), 0, call.argument("length"))));
+                  addSourceBitmap));
           result.success(null);
           break;
         }
         case "style#updateImageSource":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
           ImageSource imageSource = style.getSourceAs(call.argument("imageSourceId"));
           List<LatLng> coordinates = Convert.toLatLngList(call.argument("coordinates"), false);
@@ -1413,7 +1787,12 @@ final class MapLibreMapController
           }
           byte[] bytes = call.argument("bytes");
           if (bytes != null) {
-            imageSource.setImage(BitmapFactory.decodeByteArray(bytes, 0, call.argument("length")));
+            Bitmap updateBitmap = BitmapFactory.decodeByteArray(bytes, 0, call.argument("length"));
+            if (updateBitmap == null) {
+              result.error("INVALID_IMAGE", "Failed to decode image bytes.", null);
+              break;
+            }
+            imageSource.setImage(updateBitmap);
           }
           result.success(null);
           break;
@@ -1429,11 +1808,12 @@ final class MapLibreMapController
 
       case "style#removeSource":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
           String sourceId = (String) call.argument("sourceId");
           style.removeSource(sourceId);
@@ -1444,13 +1824,7 @@ final class MapLibreMapController
         }
       case "style#addLayer":
         {
-          if (style == null) {
-            result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
-                null);
-          }
-          addRasterLayer(
+          if (!addRasterLayer(
               call.argument("imageLayerId"),
               call.argument("imageSourceId"),
               call.argument("minzoom") != null
@@ -1461,19 +1835,16 @@ final class MapLibreMapController
                   : null,
               null,
               new PropertyValue[] {},
-              null);
+              null)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           result.success(null);
           break;
         }
       case "style#addLayerBelow":
         {
-          if (style == null) {
-            result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
-                null);
-          }
-          addRasterLayer(
+          if (!addRasterLayer(
               call.argument("imageLayerId"),
               call.argument("imageSourceId"),
               call.argument("minzoom") != null
@@ -1484,17 +1855,21 @@ final class MapLibreMapController
                   : null,
               call.argument("belowLayerId"),
               new PropertyValue[] {},
-              null);
+              null)) {
+            result.error("STYLE_NOT_READY", "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?", null);
+            break;
+          }
           result.success(null);
           break;
         }
       case "style#removeLayer":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
           String layerId = call.argument("layerId");
           style.removeLayer(layerId);
@@ -1525,11 +1900,12 @@ final class MapLibreMapController
         }
       case "style#setFilter":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
           String layerId = call.argument("layerId");
           String filter = call.argument("filter");
@@ -1565,11 +1941,12 @@ final class MapLibreMapController
         }
         case "style#getFilter":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                    "STYLE IS NULL",
-                    "The style is null. Has onStyleLoaded() already been invoked?",
+                    "STYLE_NOT_READY",
+                    "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                     null);
+            break;
           }
           Map<String, Object> reply = new HashMap<>();
           String layerId = call.argument("layerId");
@@ -1602,12 +1979,12 @@ final class MapLibreMapController
         }
         case "layer#setVisibility":
         {
-
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                "STYLE IS NULL",
-                "The style is null. Has onStyleLoaded() already been invoked?",
+                "STYLE_NOT_READY",
+                "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                 null);
+            break;
           }
           String layerId = call.argument("layerId");
           boolean visible = call.argument("visible");
@@ -1662,11 +2039,12 @@ final class MapLibreMapController
         }
         case "style#getLayerIds":
         {
-          if (style == null) {
+          if (style == null || !style.isFullyLoaded()) {
             result.error(
-                    "STYLE IS NULL",
-                    "The style is null. Has onStyleLoaded() already been invoked?",
+                    "STYLE_NOT_READY",
+                    "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                     null);
+            break;
           }
           Map<String, Object> reply = new HashMap<>();
 
@@ -1681,11 +2059,12 @@ final class MapLibreMapController
         }
       case "style#getSourceIds":
       {
-        if (style == null) {
+        if (style == null || !style.isFullyLoaded()) {
           result.error(
-                  "STYLE IS NULL",
-                  "The style is null. Has onStyleLoaded() already been invoked?",
+                  "STYLE_NOT_READY",
+                  "Style is null or not fully loaded. Has onStyleLoaded() already been invoked?",
                   null);
+          break;
         }
         Map<String, Object> reply = new HashMap<>();
 
@@ -1696,6 +2075,70 @@ final class MapLibreMapController
 
         reply.put("sources", sourceIds);
         result.success(reply);
+        break;
+      }
+      case "style#setStyle":
+      {
+        // Getting style json, url, path etc. from the flutter side
+        String styleString = call.argument("style");
+
+        // Checking if style is null or not
+        if (styleString != null) {
+          // If style is not null setting style
+          setStyleString(styleString);
+          result.success(null);
+        } else {
+
+          // else throwing error
+          result.error(
+                  "STYLE STRING IS NULL",
+                  "The style string is null.",
+                  null
+          );
+        }
+        break;
+      }
+      case "map#takeSnapshot":
+      {
+        if (mapLibreMap == null) {
+          result.error("MAP_NOT_READY", "Map is not ready", null);
+          break;
+        }
+        String styleUrl = mapLibreMap.getStyle() != null ? mapLibreMap.getStyle().getUri() : null;
+        if (styleUrl == null) {
+          result.error("STYLE_NOT_READY", "Map style is not loaded", null);
+          break;
+        }
+        Map<String, Object> snapshotArgs = (Map<String, Object>) call.arguments;
+        Integer width = snapshotArgs != null ? (Integer) snapshotArgs.get("width") : null;
+        Integer height = snapshotArgs != null ? (Integer) snapshotArgs.get("height") : null;
+
+        int snapshotWidth = width != null ? width : mapView.getWidth();
+        int snapshotHeight = height != null ? height : mapView.getHeight();
+
+        MapSnapshotter.Options options = new MapSnapshotter.Options(snapshotWidth, snapshotHeight)
+                .withStyle(styleUrl)
+                .withCameraPosition(mapLibreMap.getCameraPosition());
+        if (activeSnapshotter != null) {
+          activeSnapshotter.cancel();
+        }
+        activeSnapshotter = new MapSnapshotter(context, options);
+        activeSnapshotter.start(new MapSnapshotter.SnapshotReadyCallback() {
+          @Override
+          public void onSnapshotReady(MapSnapshot snapshot) {
+            activeSnapshotter = null;
+            Bitmap bitmap = snapshot.getBitmap();
+            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
+            result.success(stream.toByteArray());
+          }
+        }, new MapSnapshotter.ErrorHandler() {
+          @Override
+          public void onError(String error) {
+            activeSnapshotter = null;
+            result.error("SNAPSHOT_ERROR", error, null);
+          }
+        });
         break;
       }
       default:
@@ -1779,7 +2222,12 @@ final class MapLibreMapController
       arguments.put("layerId", featureLayerPair.second);
       arguments.put("id", featureLayerPair.first.id());
       methodChannel.invokeMethod("feature#onTap", arguments);
+      // Fire map#onMapClick only if featureTapsTriggersMapClick is true
+      if (featureTapsTriggersMapClick) {
+        methodChannel.invokeMethod("map#onMapClick", arguments);
+      }
     } else {
+      // Always fire map#onMapClick when no feature is tapped
       methodChannel.invokeMethod("map#onMapClick", arguments);
     }
     return true;
@@ -1803,11 +2251,27 @@ final class MapLibreMapController
       return;
     }
     disposed = true;
+    if (activeSnapshotter != null) {
+      activeSnapshotter.cancel();
+      activeSnapshotter = null;
+    }
     methodChannel.setMethodCallHandler(null);
+    // Properly cleanup MapView lifecycle before destroying
+    if (mapView != null && mapViewStarted) {
+      mapView.onPause();
+      mapView.onStop();
+      mapViewStarted = false;
+    }
     destroyMapViewIfNecessary();
     Lifecycle lifecycle = lifecycleProvider.getLifecycle();
     if (lifecycle != null) {
       lifecycle.removeObserver(this);
+    }
+
+    try {
+      context.unregisterComponentCallbacks(this);
+    } catch (Exception e) {
+      // Ignore if already unregistered
     }
   }
 
@@ -1914,7 +2378,7 @@ final class MapLibreMapController
 
   @Override
   public void onCreate(@NonNull LifecycleOwner owner) {
-    if (disposed) {
+    if (disposed || mapView == null) {
       return;
     }
     mapView.onCreate(null);
@@ -1922,26 +2386,43 @@ final class MapLibreMapController
 
   @Override
   public void onStart(@NonNull LifecycleOwner owner) {
-    if (disposed) {
+    if (disposed || mapView == null) {
       return;
     }
-    mapView.onStart();
+    if (!mapViewStarted) {
+      mapView.onStart();
+      mapViewStarted = true;
+    }
   }
 
   @Override
   public void onResume(@NonNull LifecycleOwner owner) {
-    if (disposed) {
+    if (disposed || mapView == null) {
       return;
     }
     mapView.onResume();
     if (myLocationEnabled) {
       startListeningForLocationUpdates();
     }
+    // Force a repaint to fix invisible map when returning from background.
+    // The runnable is dispatched after the message loop drains, by which time
+    // dispose() may have nulled mapView (e.g. a map hosted in a Dialog or
+    // BottomSheet that is dismissed mid-resume). Re-check disposed/mapView
+    // inside the runnable to mirror the guard at the top of onResume.
+    mapView.post(new Runnable() {
+      @Override
+      public void run() {
+        if (disposed || mapView == null) {
+          return;
+        }
+        mapView.invalidate();
+      }
+    });
   }
 
   @Override
   public void onPause(@NonNull LifecycleOwner owner) {
-    if (disposed) {
+    if (disposed || mapView == null) {
       return;
     }
     mapView.onPause();
@@ -1949,10 +2430,13 @@ final class MapLibreMapController
 
   @Override
   public void onStop(@NonNull LifecycleOwner owner) {
-    if (disposed) {
+    if (disposed || mapView == null) {
       return;
     }
-    mapView.onStop();
+    if (mapViewStarted) {
+      mapView.onStop();
+      mapViewStarted = false;
+    }
   }
 
   @Override
@@ -1964,11 +2448,34 @@ final class MapLibreMapController
     destroyMapViewIfNecessary();
   }
 
+  @Override
+  public void onConfigurationChanged(@NonNull Configuration newConfig) {
+    this.density = context.getResources().getDisplayMetrics().density;
+  }
+
+  @Override
+  public void onLowMemory() {
+    if (disposed || mapView == null) {
+      return;
+    }
+    Log.w(TAG, "onLowMemory has been called, telling MapView to reduce memory usage.");
+    // Forward low memory event to MapView
+    mapView.onLowMemory();
+  }
+
+  @Override
+  public void onTrimMemory(int level) {
+    // Lifecycle methods already handle resource management
+  }
+
   // MapLibreMapOptionsSink methods
 
   @Override
   public void setCameraTargetBounds(LatLngBounds bounds) {
     this.bounds = bounds;
+    if (mapLibreMap != null) {
+      mapLibreMap.setLatLngBoundsForCameraTarget(bounds);
+    }
   }
 
   @Override
@@ -2013,6 +2520,11 @@ final class MapLibreMapController
   }
 
   @Override
+  public void setDoubleClickZoomEnabled(boolean doubleClickZoomEnabled) {
+    mapLibreMap.getUiSettings().setDoubleTapGesturesEnabled(doubleClickZoomEnabled);
+  }
+
+  @Override
   public void setMyLocationEnabled(boolean myLocationEnabled) {
     if (this.myLocationEnabled == myLocationEnabled) {
       return;
@@ -2046,6 +2558,30 @@ final class MapLibreMapController
     this.myLocationRenderMode = myLocationRenderMode;
     if (mapLibreMap != null && locationComponent != null) {
       updateMyLocationRenderMode();
+    }
+  }
+
+  @Override
+  public void setLogoEnabled(boolean logoEnabled) {
+    mapLibreMap.getUiSettings().setLogoEnabled(logoEnabled);
+  }
+
+  @Override
+  public void setLogoViewGravity(int gravity) {
+    switch (gravity) {
+      case 0:
+        mapLibreMap.getUiSettings().setLogoGravity(Gravity.TOP | Gravity.START);
+        break;
+      case 1:
+        mapLibreMap.getUiSettings().setLogoGravity(Gravity.TOP | Gravity.END);
+        break;
+      default:
+      case 2:
+        mapLibreMap.getUiSettings().setLogoGravity(Gravity.BOTTOM | Gravity.START);
+        break;
+      case 3:
+        mapLibreMap.getUiSettings().setLogoGravity(Gravity.BOTTOM | Gravity.END);
+        break;
     }
   }
 
@@ -2139,6 +2675,18 @@ final class MapLibreMapController
   public void setTranslucentTextureSurface(boolean translucentTextureSurface) {
     // translucentTextureSurface is only useful during initial map creation
     // not for runtime updates, so this is a no-op
+  }
+
+  @Override
+  public void setUseHybridComposition(boolean useHybridComposition) {
+    // useHybridComposition selects the Platform-View backing (TextureView vs SurfaceView)
+    // and is only meaningful before the map's native view has been constructed.
+    // At runtime the chosen surface is fixed, so this is a no-op.
+  }
+
+  @Override
+  public void setFeatureTapsTriggersMapClick(boolean triggers) {
+    this.featureTapsTriggersMapClick = triggers;
   }
 
   private void updateMyLocationEnabled() {

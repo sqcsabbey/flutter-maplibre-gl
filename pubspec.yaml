@@ -31,5 +31,68 @@ flutter:
         default_package: maplibre_gl_web
 
 environment:
-  sdk: '>=2.15.0 <3.0.0'
-  flutter: ">=2.8.1"
+  sdk: '>=3.7.0 <4.0.0'
+
+dev_dependencies:
+  melos: ^7.4.0
+  very_good_analysis: ^10.0.0
+
+workspace:
+  - scripts
+  - maplibre_gl
+  - maplibre_gl_web
+  - maplibre_gl_example
+  - maplibre_gl_platform_interface
+
+melos:
+  scripts:
+    generate:
+      description: Generate layer & source properties
+      exec: dart run lib/generate.dart
+      packageFilters:
+        scope: maplibre_code_gen
+
+    test:
+      description: Run all tests
+      run: |
+        set -e
+        melos run test:io
+        melos run test:web
+
+    test:io:
+      description: Run IO tests
+      exec: flutter test
+      packageFilters:
+        scope:
+          - maplibre_gl_platform_interface
+          - maplibre_gl
+
+    test:io:coverage:
+      description: Run IO tests with coverage
+      exec: flutter test --coverage
+      packageFilters:
+        scope:
+          - maplibre_gl_platform_interface
+          - maplibre_gl
+
+    test:web:
+      description: Run Web tests
+      exec: flutter test --platform chrome
+      packageFilters:
+        scope:
+          - maplibre_gl_platform_interface
+          - maplibre_gl
+
+    analyze-all:
+      description: Run static analysis on all packages
+      run: |
+        melos exec --concurrency 10 -- "dart analyze --fatal-warnings --fatal-infos"
+
+    format-all:
+      description: Format all packages
+      exec: dart format --set-exit-if-changed .
+
+    fix-all:
+      run: |
+        melos exec --concurrency 10 -- "dart fix --apply"
+        melos exec --concurrency 10 -- "dart format -o write ."

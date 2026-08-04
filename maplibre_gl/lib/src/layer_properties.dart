@@ -4,7 +4,7 @@
 part of '../maplibre_gl.dart';
 
 abstract class LayerProperties {
-  Map<String, dynamic> toJson();
+  Map<String, dynamic> toJson({bool skipNulls = true});
 }
 
 class SymbolLayerProperties implements LayerProperties {
@@ -903,13 +903,12 @@ class SymbolLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('icon-opacity', iconOpacity);
@@ -1228,13 +1227,12 @@ class CircleLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('circle-radius', circleRadius);
@@ -1532,13 +1530,12 @@ class LineLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('line-opacity', lineOpacity);
@@ -1719,13 +1716,12 @@ class FillLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('fill-antialias', fillAntialias);
@@ -1893,32 +1889,36 @@ class FillExtrusionLayerProperties implements LayerProperties {
           changes.fillExtrusionPattern ?? fillExtrusionPattern,
       fillExtrusionHeight: changes.fillExtrusionHeight ?? fillExtrusionHeight,
       fillExtrusionBase: changes.fillExtrusionBase ?? fillExtrusionBase,
-      fillExtrusionVerticalGradient: changes.fillExtrusionVerticalGradient ??
+      fillExtrusionVerticalGradient:
+          changes.fillExtrusionVerticalGradient ??
           fillExtrusionVerticalGradient,
       visibility: changes.visibility ?? visibility,
     );
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('fill-extrusion-opacity', fillExtrusionOpacity);
     addIfPresent('fill-extrusion-color', fillExtrusionColor);
     addIfPresent('fill-extrusion-translate', fillExtrusionTranslate);
     addIfPresent(
-        'fill-extrusion-translate-anchor', fillExtrusionTranslateAnchor);
+      'fill-extrusion-translate-anchor',
+      fillExtrusionTranslateAnchor,
+    );
     addIfPresent('fill-extrusion-pattern', fillExtrusionPattern);
     addIfPresent('fill-extrusion-height', fillExtrusionHeight);
     addIfPresent('fill-extrusion-base', fillExtrusionBase);
     addIfPresent(
-        'fill-extrusion-vertical-gradient', fillExtrusionVerticalGradient);
+      'fill-extrusion-vertical-gradient',
+      fillExtrusionVerticalGradient,
+    );
     addIfPresent('visibility', visibility);
     return json;
   }
@@ -2077,13 +2077,12 @@ class RasterLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('raster-opacity', rasterOpacity);
@@ -2210,7 +2209,8 @@ class HillshadeLayerProperties implements LayerProperties {
 
   HillshadeLayerProperties copyWith(HillshadeLayerProperties changes) {
     return HillshadeLayerProperties(
-      hillshadeIlluminationDirection: changes.hillshadeIlluminationDirection ??
+      hillshadeIlluminationDirection:
+          changes.hillshadeIlluminationDirection ??
           hillshadeIlluminationDirection,
       hillshadeIlluminationAnchor:
           changes.hillshadeIlluminationAnchor ?? hillshadeIlluminationAnchor,
@@ -2227,17 +2227,18 @@ class HillshadeLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent(
-        'hillshade-illumination-direction', hillshadeIlluminationDirection);
+      'hillshade-illumination-direction',
+      hillshadeIlluminationDirection,
+    );
     addIfPresent('hillshade-illumination-anchor', hillshadeIlluminationAnchor);
     addIfPresent('hillshade-exaggeration', hillshadeExaggeration);
     addIfPresent('hillshade-shadow-color', hillshadeShadowColor);
@@ -2357,13 +2358,12 @@ class HeatmapLayerProperties implements LayerProperties {
   }
 
   @override
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool skipNulls = true}) {
     final json = <String, dynamic>{};
 
     void addIfPresent(String fieldName, dynamic value) {
-      if (value != null) {
-        json[fieldName] = value;
-      }
+      if (value == null && skipNulls) return;
+      json[fieldName] = value;
     }
 
     addIfPresent('heatmap-radius', heatmapRadius);

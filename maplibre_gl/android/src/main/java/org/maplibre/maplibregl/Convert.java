@@ -267,6 +267,10 @@ static LocationEngineRequest toLocationEngineRequest(Object o) {
     if (zoomGesturesEnabled != null) {
       sink.setZoomGesturesEnabled(toBoolean(zoomGesturesEnabled));
     }
+    final Object doubleClickZoomEnabled = data.get("doubleClickZoomEnabled");
+    if (doubleClickZoomEnabled != null) {
+      sink.setDoubleClickZoomEnabled(toBoolean(doubleClickZoomEnabled));
+    }
     final Object myLocationEnabled = data.get("myLocationEnabled");
     if (myLocationEnabled != null) {
       sink.setMyLocationEnabled(toBoolean(myLocationEnabled));
@@ -278,6 +282,14 @@ static LocationEngineRequest toLocationEngineRequest(Object o) {
     final Object myLocationRenderMode = data.get("myLocationRenderMode");
     if (myLocationRenderMode != null) {
       sink.setMyLocationRenderMode(toInt(myLocationRenderMode));
+    }
+    final Object logoEnabled = data.get("logoEnabled");
+    if (logoEnabled != null) {
+      sink.setLogoEnabled(toBoolean(logoEnabled));
+    }
+    final Object logoViewGravity = data.get("logoViewPosition");
+    if (logoViewGravity != null) {
+      sink.setLogoViewGravity(toInt(logoViewGravity));
     }
     final Object logoViewMargins = data.get("logoViewMargins");
     if (logoViewMargins != null) {
@@ -309,9 +321,17 @@ static LocationEngineRequest toLocationEngineRequest(Object o) {
     if (foregroundLoadColor != null) {
       sink.setForegroundLoadColor(toInt(foregroundLoadColor));
     }
+    final Object useHybridComposition = data.get("useHybridComposition");
+    if (useHybridComposition != null) {
+      sink.setUseHybridComposition(toBoolean(useHybridComposition));
+    }
     final Object translucentTextureSurface = data.get("translucentTextureSurface");
     if (translucentTextureSurface != null) {
       sink.setTranslucentTextureSurface(toBoolean(translucentTextureSurface));
+    }
+    final Object featureTapsTriggersMapClick = data.get("featureTapsTriggersMapClick");
+    if (featureTapsTriggersMapClick != null) {
+      sink.setFeatureTapsTriggersMapClick(toBoolean(featureTapsTriggersMapClick));
     }
   }
 }

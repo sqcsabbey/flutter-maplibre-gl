@@ -16,15 +16,18 @@ import io.flutter.plugin.common.BinaryMessenger;
 class MapLibreMapBuilder implements MapLibreMapOptionsSink {
   public final String TAG = getClass().getSimpleName();
   private final MapLibreMapOptions options =
-      new MapLibreMapOptions().attributionEnabled(true).logoEnabled(false).textureMode(true);
+      new MapLibreMapOptions().attributionEnabled(true).logoEnabled(false).textureMode(false);
   private boolean trackCameraPosition = false;
   private boolean myLocationEnabled = false;
   private boolean dragEnabled = true;
+  private boolean featureTapsTriggersMapClick = false;
   private int myLocationTrackingMode = 0;
   private int myLocationRenderMode = 0;
   private String styleString = "";
   private LatLngBounds bounds = null;
   private LocationEngineRequest locationEngineRequest = null;
+  private boolean translucentRequested = false;
+  private boolean hybridCompositionActive = false;
 
   MapLibreMapController build(
       int id,
@@ -34,7 +37,15 @@ class MapLibreMapBuilder implements MapLibreMapOptionsSink {
 
     final MapLibreMapController controller =
         new MapLibreMapController(
-            id, context, messenger, lifecycleProvider, options, styleString, dragEnabled);
+            id, 
+            context, 
+            messenger, 
+            lifecycleProvider, 
+            options, 
+            styleString, 
+            dragEnabled, 
+            featureTapsTriggersMapClick
+        );
     controller.init();
     controller.setMyLocationEnabled(myLocationEnabled);
     controller.setMyLocationTrackingMode(myLocationTrackingMode);
@@ -107,6 +118,11 @@ class MapLibreMapBuilder implements MapLibreMapOptionsSink {
   }
 
   @Override
+  public void setDoubleClickZoomEnabled(boolean doubleClickZoomEnabled) {
+    options.doubleTapGesturesEnabled(doubleClickZoomEnabled);
+  }
+
+  @Override
   public void setMyLocationEnabled(boolean myLocationEnabled) {
     this.myLocationEnabled = myLocationEnabled;
   }
@@ -119,6 +135,29 @@ class MapLibreMapBuilder implements MapLibreMapOptionsSink {
   @Override
   public void setMyLocationRenderMode(int myLocationRenderMode) {
     this.myLocationRenderMode = myLocationRenderMode;
+  }
+
+  @Override
+  public void setLogoEnabled(boolean logoEnabled) {
+    options.logoEnabled(logoEnabled);
+  }
+
+  @Override
+  public void setLogoViewGravity(int gravity) {
+     switch (gravity) {
+      case 0:
+        options.logoGravity(Gravity.TOP | Gravity.START);
+        break;
+      case 1:
+        options.logoGravity(Gravity.TOP | Gravity.END);
+        break;
+      case 2:
+        options.logoGravity(Gravity.BOTTOM | Gravity.START);
+        break;
+      case 3:
+        options.logoGravity(Gravity.BOTTOM | Gravity.END);
+        break;
+    }
   }
 
   public void setLogoViewMargins(int x, int y) {
@@ -213,6 +252,10 @@ class MapLibreMapBuilder implements MapLibreMapOptionsSink {
     this.dragEnabled = enabled;
   }
 
+  public void setFeatureTapsTriggersMapClick(boolean triggers) {
+    this.featureTapsTriggersMapClick = triggers;
+  }
+
   @Override
   public void setLocationEngineProperties(@NonNull LocationEngineRequest locationEngineRequest) {
     this.locationEngineRequest = locationEngineRequest;
@@ -225,6 +268,16 @@ class MapLibreMapBuilder implements MapLibreMapOptionsSink {
 
   @Override
   public void setTranslucentTextureSurface(boolean translucentTextureSurface) {
+    this.translucentRequested = translucentTextureSurface;
     options.translucentTextureSurface(translucentTextureSurface);
+    // textureMode must be on if EITHER a translucent surface is required OR Flutter is
+    // using Hybrid Composition (TLHC). Both are correctness requirements, not knobs.
+    options.textureMode(translucentRequested || hybridCompositionActive);
+  }
+
+  @Override
+  public void setUseHybridComposition(boolean useHybridComposition) {
+    this.hybridCompositionActive = useHybridComposition;
+    options.textureMode(translucentRequested || hybridCompositionActive);
   }
 }

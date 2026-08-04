@@ -1,70 +1,178 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-
-import 'dart:io';
+import 'dart:async' show unawaited;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:location/location.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
-import 'package:maplibre_gl_example/attribution.dart';
-import 'package:maplibre_gl_example/get_map_informations.dart';
-import 'package:maplibre_gl_example/given_bounds.dart';
-import 'package:maplibre_gl_example/localized_map.dart';
-import 'package:maplibre_gl_example/no_location_permission_page.dart';
-import 'package:maplibre_gl_example/pmtiles.dart';
-import 'package:maplibre_gl_example/presentation/gps_location/gps_location_page.dart';
-import 'package:maplibre_gl_example/translucent_full_map.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-import 'animate_camera.dart';
-import 'annotation_order_maps.dart';
-import 'click_annotations.dart';
-import 'custom_marker.dart';
-import 'full_map.dart';
-import 'layer.dart';
-import 'line.dart';
-import 'local_style.dart';
-import 'map_ui.dart';
-import 'move_camera.dart';
-import 'offline_regions.dart';
+// Page system
 import 'page.dart';
-import 'place_batch.dart';
-import 'place_circle.dart';
-import 'place_fill.dart';
-import 'place_source.dart';
-import 'place_symbol.dart';
-import 'scrolling_map.dart';
-import 'sources.dart';
+
+// Basics examples
+import 'examples/basics/full_map_example.dart';
+import 'examples/basics/multi_style_switch.dart';
+import 'examples/layers/various_sources.dart';
+import 'examples/basics/get_map_state.dart';
+import 'examples/basics/gps_location_page.dart';
+
+// Camera examples
+import 'examples/camera/camera_controls_example.dart';
+import 'examples/camera/camera_bounds_example.dart';
+
+// Interaction examples
+import 'examples/interaction/map_controls_example.dart';
+import 'examples/interaction/map_gestures_example.dart';
+import 'examples/interaction/hover_effect_example.dart';
+
+// Annotations examples
+import 'examples/annotations/annotations_example.dart';
+import 'examples/annotations/annotation_order_example.dart';
+import 'examples/annotations/annotation_properties_example.dart';
+import 'examples/annotations/custom_marker.dart';
+import 'examples/annotations/edit_annotation_animated.dart';
+import 'examples/annotations/edit_annotation_draggable.dart';
+
+// Layers examples
+import 'examples/layers/circle_layer_example.dart';
+import 'examples/layers/cluster_properties_example.dart';
+import 'examples/layers/fill_layer_example.dart';
+import 'examples/layers/line_layer_example.dart';
+import 'examples/layers/symbol_layer_example.dart';
+import 'examples/layers/edit_style_layer_animated.dart';
+import 'examples/layers/edit_style_layer_draggable.dart';
+
+// Advanced examples
+import 'examples/advanced/offline_regions.dart';
+import 'examples/advanced/pmtiles.dart';
+import 'examples/advanced/translucent_full_map.dart';
+import 'examples/advanced/map_snapshot.dart';
+import 'examples/advanced/map_language.dart';
+
+// Doc-only examples (not shown in app home, only reachable via ?example=slug)
+import 'examples/docs/doc_full_map.dart';
+import 'examples/docs/doc_symbol_layer.dart';
+import 'examples/docs/doc_circle_layer.dart';
+import 'examples/docs/doc_fill_layer.dart';
+import 'examples/docs/doc_line_layer.dart';
+import 'examples/docs/doc_cluster.dart';
+import 'examples/docs/doc_annotation_markers.dart';
+import 'examples/docs/doc_camera.dart';
+import 'examples/docs/doc_geojson_source.dart';
+import 'examples/docs/doc_pmtiles.dart';
+import 'examples/docs/doc_heatmap.dart';
+import 'examples/docs/doc_expressions.dart';
+
+String? _initialExampleSlug() {
+  if (!kIsWeb) return null;
+  return Uri.base.queryParameters['example'];
+}
+
+void main() {
+  if (kIsWeb) {
+    print(
+      'Running with WASM: $kIsWasm, in ${kReleaseMode
+          ? "release"
+          : kProfileMode
+          ? "profile"
+          : "debug"} mode',
+    );
+  }
+
+  runApp(const MapLibreExampleApp());
+}
+
+class MapLibreExampleApp extends StatelessWidget {
+  const MapLibreExampleApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'MapLibre Examples',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1976D2),
+          brightness: Brightness.light,
+        ),
+      ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1976D2),
+          brightness: Brightness.dark,
+        ),
+      ),
+      themeMode: ThemeMode.system,
+      home:
+          [
+            ..._allPages,
+            ..._docPages,
+          ].where((p) => p.slug == _initialExampleSlug()).firstOrNull ??
+          const MapsDemo(),
+    );
+  }
+}
 
 final List<ExamplePage> _allPages = <ExamplePage>[
-  const MapUiPage(),
-  const FullMapPage(),
-  const TranslucentFullMapPage(),
-  const PMTilesPage(),
-  const LocalizedMapPage(),
-  const AnimateCameraPage(),
-  const MoveCameraPage(),
-  const PlaceSymbolPage(),
-  const PlaceSourcePage(),
-  const LinePage(),
-  const LocalStylePage(),
-  const LayerPage(),
-  const PlaceCirclePage(),
-  const PlaceFillPage(),
-  const ScrollingMapPage(),
-  const OfflineRegionsPage(),
-  const AnnotationOrderPage(),
-  const CustomMarkerPage(),
-  const BatchAddPage(),
-  const ClickAnnotationPage(),
-  const Sources(),
-  const GivenBoundsPage(),
-  const GetMapInfoPage(),
-  const NoLocationPermissionPage(),
-  const AttributionPage(),
+  // Basics
+  const FullMapExample(),
+  const MultiStyleSwitchPage(),
+  const VariousSources(),
   const GpsLocationPage(),
+  const GetMapInfoPage(),
+
+  // Camera
+  const CameraControlsExample(),
+  const CameraBoundsExample(),
+
+  // Interaction
+  const MapControlsExample(),
+  const MapGesturesExample(),
+  if (kIsWeb) const HoverEffectExample(),
+
+  // Annotations
+  const AnnotationsExample(),
+  const AnnotationPropertiesExample(),
+  const AnnotationOrderExample(),
+  const CustomMarkerPage(),
+  const EditAnnotationAnimatedExample(),
+  const EditAnnotationDraggableExample(),
+
+  // Layers
+  const SymbolLayerExample(),
+  const CircleLayerExample(),
+  const ClusterPropertiesExample(),
+  const FillLayerExample(),
+  const LineLayerExample(),
+  const EditStyleLayerAnimatedExample(),
+  const EditStyleLayerDraggableExample(),
+
+  // Advanced
+  const MapLanguageExample(),
+  const PMTilesPage(),
+  // Offline regions are Android/iOS only — MapLibre GL JS has no offline API.
+  if (!kIsWeb) const OfflineRegionsPage(),
+  const TranslucentFullMapPage(),
+  const MapSnapshotPage(),
+];
+
+// Doc-only pages: not shown in the app home list, only reachable via ?example=<slug>.
+// These render mapOnly: true — clean fullscreen map for iframe embeds in the docs site.
+final List<ExamplePage> _docPages = [
+  const DocFullMapExample(),
+  const DocSymbolLayerExample(),
+  const DocCircleLayerExample(),
+  const DocFillLayerExample(),
+  const DocLineLayerExample(),
+  const DocClusterExample(),
+  const DocAnnotationMarkersExample(),
+  const DocCameraExample(),
+  const DocGeoJsonSourceExample(),
+  const DocPMTilesExample(),
+  const DocHeatmapExample(),
+  const DocExpressionsExample(),
 ];
 
 class MapsDemo extends StatefulWidget {
@@ -75,12 +183,18 @@ class MapsDemo extends StatefulWidget {
 }
 
 class _MapsDemoState extends State<MapsDemo> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(initHybridComposition());
+  }
+
   /// Determine the android version of the phone and turn off HybridComposition
   /// on older sdk versions to improve performance for these
   ///
   /// !!! Hybrid composition is currently broken do no use !!!
   Future<void> initHybridComposition() async {
-    if (!kIsWeb && Platform.isAndroid) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final androidInfo = await DeviceInfoPlugin().androidInfo;
       final sdkVersion = androidInfo.version.sdkInt;
       if (sdkVersion >= 29) {
@@ -93,42 +207,160 @@ class _MapsDemoState extends State<MapsDemo> {
 
   Future<void> _pushPage(BuildContext context, ExamplePage page) async {
     if (!kIsWeb && page.needsLocationPermission) {
-      final location = Location();
-      final hasPermissions = await location.hasPermission();
-      if (hasPermissions != PermissionStatus.granted) {
-        await location.requestPermission();
+      final status = await Permission.locationWhenInUse.status;
+      if (!status.isGranted) {
+        await Permission.locationWhenInUse.request();
       }
     }
     if (context.mounted) {
-      Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => Scaffold(
-          appBar: AppBar(title: Text(page.title)),
-          body: page,
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder:
+              (_) => Scaffold(
+                appBar: AppBar(title: Text(page.title)),
+                body: page,
+              ),
         ),
-      ));
+      );
     }
+  }
+
+  Map<ExampleCategory, List<ExamplePage>> _groupByCategory() {
+    final grouped = <ExampleCategory, List<ExamplePage>>{};
+    for (final page in _allPages) {
+      grouped.putIfAbsent(page.category, () => []).add(page);
+    }
+    return grouped;
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final groupedPages = _groupByCategory();
+
     return Scaffold(
-      appBar: AppBar(title: const Text('MapLibre examples')),
-      body: ListView.builder(
-        itemCount: _allPages.length + 1,
-        itemBuilder: (_, int index) => index == _allPages.length
-            ? const AboutListTile(
-                applicationName: "flutter-maplibre-gl example",
-              )
-            : ListTile(
-                leading: _allPages[index].leading,
-                title: Text(_allPages[index].title),
-                onTap: () => _pushPage(context, _allPages[index]),
+      body: CustomScrollView(
+        slivers: [
+          const SliverAppBar.large(
+            title: Text('MapLibre Examples'),
+            floating: true,
+            snap: true,
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(
+                left: 16.0,
+                right: 16.0,
+                bottom: 16.0,
               ),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: theme.colorScheme.primary,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Explore ${_allPages.length} interactive examples',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Learn how to use MapLibre GL with Flutter through categorized examples.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                const categories = ExampleCategory.values;
+                if (index >= categories.length) {
+                  // About tile at the end
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 8.0,
+                    ),
+                    child: AboutListTile(
+                      icon: Icon(Icons.info),
+                      applicationName: "MapLibre GL Flutter",
+                      aboutBoxChildren: [
+                        Text(
+                          'MapLibre GL Flutter is an open-source Flutter plugin for embedding interactive maps using the MapLibre GL Native library.',
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'This example app showcases various features and capabilities of the MapLibre GL Flutter plugin through interactive examples.',
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                final category = categories[index];
+                final pages = groupedPages[category] ?? [];
+
+                if (pages.isEmpty) return const SizedBox.shrink();
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 4.0,
+                  ),
+                  child: Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: ExpansionTile(
+                      leading: Icon(
+                        category.icon,
+                        color: theme.colorScheme.primary,
+                      ),
+                      title: Text(
+                        category.label,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text('${pages.length} examples'),
+                      children:
+                          pages
+                              .map(
+                                (page) => ListTile(
+                                  leading: page.leading,
+                                  title: Text(page.title),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () => _pushPage(context, page),
+                                ),
+                              )
+                              .toList(),
+                    ),
+                  ),
+                );
+              },
+              childCount: ExampleCategory.values.length + 1,
+            ),
+          ),
+          const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
+        ],
       ),
     );
   }
-}
-
-void main() {
-  runApp(const MaterialApp(home: MapsDemo()));
 }

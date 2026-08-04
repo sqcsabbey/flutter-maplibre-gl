@@ -1,10 +1,11 @@
 @JS('maplibregl')
-library maplibre.interop.ui.camera;
+library;
 
-import 'package:js/js.dart';
+import 'dart:js_interop';
 import 'package:maplibre_gl_web/src/interop/geo/lng_lat_bounds_interop.dart';
 import 'package:maplibre_gl_web/src/interop/geo/lng_lat_interop.dart';
 import 'package:maplibre_gl_web/src/interop/geo/point_interop.dart';
+import 'package:maplibre_gl_web/src/interop/js.dart';
 import 'package:maplibre_gl_web/src/interop/ui/map_interop.dart';
 import 'package:maplibre_gl_web/src/interop/util/evented_interop.dart';
 
@@ -20,25 +21,26 @@ import 'package:maplibre_gl_web/src/interop/util/evented_interop.dart';
 ///  @property {number} pitch The desired pitch, in degrees.
 ///  @property {LngLatLike} around If `zoom` is specified, `around` determines the point around which the zoom is centered.
 @JS()
-@anonymous
+@staticInterop
 class CameraOptionsJsImpl {
-  external LngLatJsImpl get center;
+  factory CameraOptionsJsImpl() => createJsObject() as CameraOptionsJsImpl;
+}
 
-  external num get zoom;
+extension CameraOptionsJsImplExtension on CameraOptionsJsImpl {
+  external LngLatJsImpl? get center;
+  external set center(LngLatJsImpl? value);
 
-  external num get bearing;
+  external num? get zoom;
+  external set zoom(num? value);
 
-  external num get pitch;
+  external num? get bearing;
+  external set bearing(num? value);
 
-  external LngLatJsImpl get around;
+  external num? get pitch;
+  external set pitch(num? value);
 
-  external factory CameraOptionsJsImpl({
-    LngLatJsImpl? center,
-    num? zoom,
-    num? bearing,
-    num? pitch,
-    LngLatJsImpl? around,
-  });
+  external LngLatJsImpl? get around;
+  external set around(LngLatJsImpl? value);
 }
 
 ///  Options common to map movement methods that involve animation, such as {@link MapLibreMap#panBy} and
@@ -54,25 +56,27 @@ class CameraOptionsJsImpl {
 ///  @property {boolean} essential If `true`, then the animation is considered essential and will not be affected by
 ///    [`prefers-reduced-motion`](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion).
 @JS()
-@anonymous
+@staticInterop
 class AnimationOptionsJsImpl {
-  external num get duration;
+  factory AnimationOptionsJsImpl() =>
+      createJsObject() as AnimationOptionsJsImpl;
+}
 
-  external num Function(num time) get easing;
+extension AnimationOptionsJsImplExtension on AnimationOptionsJsImpl {
+  external num? get duration;
+  external set duration(num? value);
 
-  external PointJsImpl get offset;
+  external JSFunction? get easing;
+  external set easing(JSFunction? value);
 
-  external bool get animate;
+  external PointJsImpl? get offset;
+  external set offset(PointJsImpl? value);
 
-  external bool get essential;
+  external bool? get animate;
+  external set animate(bool? value);
 
-  external factory AnimationOptionsJsImpl({
-    num? duration,
-    num Function(num time)? easing,
-    PointJsImpl? offset,
-    bool? animate,
-    bool? essential,
-  });
+  external bool? get essential;
+  external set essential(bool? value);
 }
 
 ///  Options for setting padding on a call to {@link MapLibreMap#fitBounds}. All properties of this object must be
@@ -84,26 +88,30 @@ class AnimationOptionsJsImpl {
 ///  @property {number} left Padding in pixels from the left of the map canvas.
 ///  @property {number} right Padding in pixels from the right of the map canvas.
 @JS()
-@anonymous
+@staticInterop
 class PaddingOptionsJsImpl {
-  external num get top;
+  factory PaddingOptionsJsImpl() => createJsObject() as PaddingOptionsJsImpl;
+}
 
-  external num get bottom;
+extension PaddingOptionsJsImplExtension on PaddingOptionsJsImpl {
+  external num? get top;
+  external set top(num? value);
 
-  external num get left;
+  external num? get bottom;
+  external set bottom(num? value);
 
-  external num get right;
+  external num? get left;
+  external set left(num? value);
 
-  external factory PaddingOptionsJsImpl({
-    num? top,
-    num? bottom,
-    num? left,
-    num? right,
-  });
+  external num? get right;
+  external set right(num? value);
 }
 
 @JS('Camera')
-abstract class CameraJsImpl extends EventedJsImpl {
+@staticInterop
+abstract class CameraJsImpl extends EventedJsImpl {}
+
+extension CameraJsImplExtension on CameraJsImpl {
   ///  Returns the map's geographical centerpoint.
   ///
   ///  @memberof MapLibreMap#
@@ -120,8 +128,7 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @returns {MapLibreMap} `this`
   ///  @example
   ///  map.setCenter([-74, 38]);
-  external MapLibreMapJsImpl setCenter(LngLatJsImpl center,
-      [dynamic eventData]);
+  external MapLibreMapJsImpl setCenter(LngLatJsImpl center, [JSAny? eventData]);
 
   ///  Pans the map by the specified offset.
   ///
@@ -133,8 +140,11 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
   ///  @see [Navigate the map with game-like controls](https://maplibre.org/maplibre-gl-js/docs/examples/game-controls/)
-  external MapLibreMapJsImpl panBy(PointJsImpl offset,
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl panBy(
+    PointJsImpl offset, [
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Pans the map to the specified location, with an animated transition.
   ///
@@ -145,8 +155,11 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires movestart
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl panTo(LngLatJsImpl lnglat,
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl panTo(
+    LngLatJsImpl lnglat, [
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Returns the map's current zoom level.
   ///
@@ -169,7 +182,7 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @example
   ///  // zoom the map to 5
   ///  map.setZoom(5);
-  external MapLibreMapJsImpl setZoom(num zoom, [dynamic eventData]);
+  external MapLibreMapJsImpl setZoom(num zoom, [JSAny? eventData]);
 
   ///  Zooms the map to the specified zoom level, with an animated transition.
   ///
@@ -184,8 +197,11 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires moveend
   ///  @fires zoomend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl zoomTo(num zoom,
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl zoomTo(
+    num zoom, [
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Increases the map's zoom level by 1.
   ///
@@ -199,8 +215,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires moveend
   ///  @fires zoomend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl zoomIn(
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl zoomIn([
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Decreases the map's zoom level by 1.
   ///
@@ -214,8 +232,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires moveend
   ///  @fires zoomend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl zoomOut(
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl zoomOut([
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Returns the map's current bearing. The bearing is the compass direction that is \"up\"; for example, a bearing
   ///  of 90° orients the map so that east is up.
@@ -239,7 +259,7 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @example
   ///  // rotate the map to 90 degrees
   ///  map.setBearing(90);
-  external MapLibreMapJsImpl setBearing(num bearing, [dynamic eventData]);
+  external MapLibreMapJsImpl setBearing(num bearing, [JSAny? eventData]);
 
   ///  Rotates the map to the specified bearing, with an animated transition. The bearing is the compass direction
   ///  that is \"up\"; for example, a bearing of 90° orients the map so that east is up.
@@ -251,8 +271,11 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires movestart
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl rotateTo(num bearing,
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl rotateTo(
+    num bearing, [
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Rotates the map so that north is up (0° bearing), with an animated transition.
   ///
@@ -262,8 +285,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires movestart
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl resetNorth(
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl resetNorth([
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Rotates and pitches the map so that north is up (0° bearing) and pitch is 0°, with an animated transition.
   ///
@@ -273,8 +298,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires movestart
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl resetNorthPitch(
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl resetNorthPitch([
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Snaps the map so that north is up (0° bearing), if the current bearing is close enough to it (i.e. within the
   ///  `bearingSnap` threshold).
@@ -285,8 +312,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires movestart
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl snapToNorth(
-      [AnimationOptionsJsImpl? options, dynamic eventData]);
+  external MapLibreMapJsImpl snapToNorth([
+    AnimationOptionsJsImpl? options,
+    JSAny? eventData,
+  ]);
 
   ///  Returns the map's current pitch (tilt).
   ///
@@ -303,7 +332,7 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires movestart
   ///  @fires moveend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl setPitch(num pitch, [dynamic eventData]);
+  external MapLibreMapJsImpl setPitch(num pitch, [JSAny? eventData]);
 
   ///  @memberof MapLibreMap#
   ///  @param {LatLngBoundsLike} bounds Calculate the center for these bounds in the viewport and use
@@ -320,8 +349,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  var newCameraTransform = map.cameraForBounds(bbox, {
   ///    padding: {top: 10, bottom:25, left: 15, right: 5}
   ///  });
-  external CameraOptionsJsImpl cameraForBounds(LngLatBoundsJsImpl bounds,
-      [CameraOptionsJsImpl? options]);
+  external CameraOptionsJsImpl cameraForBounds(
+    LngLatBoundsJsImpl bounds, [
+    CameraOptionsJsImpl? options,
+  ]);
 
   ///  Pans and zooms the map to contain its visible area within the specified geographical bounds.
   ///  This function will also reset the map's bearing to 0 if bearing is nonzero.
@@ -347,8 +378,11 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///    padding: {top: 10, bottom:25, left: 15, right: 5}
   ///  });
   ///  @see [Fit a map to a bounding box](https://maplibre.org/maplibre-gl-js/docs/examples/fitbounds/)
-  external MapLibreMapJsImpl fitBounds(LngLatBoundsJsImpl bounds,
-      [dynamic options, dynamic eventData]);
+  external MapLibreMapJsImpl fitBounds(
+    LngLatBoundsJsImpl bounds, [
+    JSAny? options,
+    JSAny? eventData,
+  ]);
 
   ///  Pans, rotates and zooms the map to to fit the box made by points p0 and p1
   ///  once the map is rotated to the specified bearing. To zoom without rotating,
@@ -378,8 +412,12 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  });
   ///  @see [Used by BoxZoomHandler]
   external MapLibreMapJsImpl fitScreenCoordinates(
-      PointJsImpl p0, PointJsImpl p1, num bearing,
-      [dynamic options, dynamic eventData]);
+    PointJsImpl p0,
+    PointJsImpl p1,
+    num bearing, [
+    JSAny? options,
+    JSAny? eventData,
+  ]);
 
   ///  Changes any combination of center, zoom, bearing, and pitch, without
   ///  an animated transition. The map will retain its current values for any
@@ -399,8 +437,10 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires zoomend
   ///  @fires pitchend
   ///  @returns {MapLibreMap} `this`
-  external MapLibreMapJsImpl jumpTo(CameraOptionsJsImpl options,
-      [dynamic eventData]);
+  external MapLibreMapJsImpl jumpTo(
+    CameraOptionsJsImpl options, [
+    JSAny? eventData,
+  ]);
 
   ///  Changes any combination of center, zoom, bearing, and pitch, with an animated transition
   ///  between old and new values. The map will retain its current values for any
@@ -425,7 +465,7 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @fires pitchend
   ///  @returns {MapLibreMap} `this`
   ///  @see [Navigate the map with game-like controls](https://maplibre.org/maplibre-gl-js/docs/examples/game-controls/)
-  external MapLibreMapJsImpl easeTo(dynamic options, [dynamic eventData]);
+  external MapLibreMapJsImpl easeTo(JSAny options, [JSAny? eventData]);
 
   ///  Changes any combination of center, zoom, bearing, and pitch, animating the transition along a curve that
   ///  evokes flight. The animation seamlessly incorporates zooming and panning to help
@@ -483,7 +523,7 @@ abstract class CameraJsImpl extends EventedJsImpl {
   ///  @see [Fly to a location](https://maplibre.org/maplibre-gl-js/docs/examples/flyto/)
   ///  @see [Slowly fly to a location](https://maplibre.org/maplibre-gl-js/docs/examples/flyto-options/)
   ///  @see [Fly to a location based on scroll position](https://maplibre.org/maplibre-gl-js/docs/examples/scroll-fly-to/)
-  external MapLibreMapJsImpl flyTo(dynamic options, [dynamic eventData]);
+  external MapLibreMapJsImpl flyTo(JSAny options, [JSAny? eventData]);
 
   external bool isEasing();
 

@@ -1,3 +1,103 @@
+See top-level [CHANGELOG.md](../CHANGELOG.md) for full details.
+
+## [0.26.2](https://github.com/maplibre/flutter-maplibre-gl/compare/v0.26.1...v0.26.2)
+
+No web-specific changes; version aligned with the `maplibre_gl` 0.26.2 release. See top-level [CHANGELOG.md](../CHANGELOG.md) for full details.
+
+## [0.26.1](https://github.com/maplibre/flutter-maplibre-gl/compare/v0.26.0...v0.26.1)
+
+No web-specific changes; version aligned with the `maplibre_gl` 0.26.1 release. See top-level [CHANGELOG.md](../CHANGELOG.md) for full details.
+
+## [0.26.0](https://github.com/maplibre/flutter-maplibre-gl/compare/v0.25.0...v0.26.0)
+
+### Breaking
+* Upgraded MapLibre GL JS from 4.7.1 to 5.24.0 (#761, #651).
+  * `initialCameraPosition` is now ignored if the map style contains camera properties (`center`, `zoom`, `bearing`, `pitch`). MapLibre GL JS v5 gives priority to style-defined camera values over constructor options. Use `MapLibreMapController.moveCamera()` or `MapLibreMapController.animateCamera()` after map load to override.
+  * `preserveDrawingBuffer`, `antialias`, `failIfMajorPerformanceCaveat` now set via `canvasContextAttributes` (MapLibre GL JS v5 API change).
+  * `on()`/`off()`/`once()` adapted for v5 `Subscription` return type.
+  * Removed `customAttribution` from `MapOptionsJsImpl` (moved to `AttributionControl` options in v5).
+
+### Added
+* Exposed `onMouseMove` and added feature state management (`setFeatureState`, `getFeatureState`, `removeFeatureState`) (#718).
+* Added `getLayerVisibility`, web snapshot, and map sizing features (#722).
+* Added Scale Control (#720).
+* Location engine properties support — `enableHighAccuracy`, `maximumAge`, `timeout` from `LocationEnginePlatforms.web()` passed to `GeolocateControl`'s `PositionOptions`.
+* `trackUserLocation` on `GeolocateControl` managed based on `MyLocationTrackingMode`.
+* `GeolocateControl.trigger()` called programmatically when tracking mode is enabled.
+* `easeCamera` fully implemented via MapLibre GL JS `map.easeTo({easing})`; all four `CameraAnimationInterpolation` values are honored via cubic-bezier easing callbacks. Previously threw `UnimplementedError` (#789).
+  * `easeInOut` → cubic-bezier `(0.42, 0, 0.58, 1)`
+  * `easeOut` → cubic-bezier `(0, 0, 0.58, 1)`
+  * `fastOutLinearIn` → cubic-bezier `(0.4, 0, 1, 1)` (Material Design)
+  * `linear` → identity
+  * Omitting the parameter falls through to MapLibre GL JS's built-in default curve.
+
+### Changed
+* `easeTo` wrapper on `MapLibreMap` now jsifies Dart `Map` options the same way `flyTo` already did, enabling the new `easeCamera` implementation to pass a plain Dart options dict.
+
+### Fixed
+* Improved `styleimagemissing` handling (#725).
+* Fixed JS Interop and WASM compilation in release mode (#714).
+* `removeLayer` and `removeSource` no longer throw when the layer/source doesn't exist.
+* `setGeoJsonSource` returns early instead of crashing when the source doesn't exist.
+
+## [0.25.0](https://github.com/maplibre/flutter-maplibre-gl/compare/v0.24.1...v0.25.0) - 2026-01-07
+
+### Major Changes
+
+#### **BREAKING**: Migration to Modern JS Interop (#687)
+* **WASM Compatible**: Migrated from deprecated `dart:js_util` to modern `dart:js_interop` API
+* Required for Flutter 3.38.4+ compatibility
+* Now fully compatible with Flutter's WASM compilation target
+* **No public API changes** - this is an internal implementation update
+
+#### Technical Details of JS Interop Migration:
+* Replaced `dart:js_util` with `dart:js_interop` and `dart:js_interop_unsafe`
+* Updated all JS interop classes to use `@staticInterop` + extension methods pattern
+* Migrated from `@JS()` factory constructors to new interop model
+* Converted `allowInterop()` callbacks to `.toJS`
+* Updated property access from `getProperty()`/`setProperty()` to native JS property access
+* Replaced `jsify()`/`dartify()` utilities to work with `JSAny`/`JSObject` types
+* Fixed primitive type conversions: `JSString.toDart`, `JSNumber.toDartDouble`, `JSArray.toDart`
+* Converted static methods to top-level functions (e.g., `LngLat.convert()` → `lngLatConvert()`)
+
+### Added
+* Implemented `getStyle()` - returns map style as JSON string (previously threw `UnimplementedError`)
+* Implemented `getSourceIds()` - returns list of source IDs from current style
+* Improved `getLayers()` - safely handles null styles and returns empty list instead of crashing
+
+### Fixed
+* Fixed `setPaintProperty` and `setLayoutProperty` to handle nullable `JSAny` values correctly (#12dfad2)
+* Improved `jsify` function to create JS arrays correctly
+* Enhanced error handling in `getLayer()`, `getFilter()`, and `isStyleLoaded()` with null-safety checks
+* Fixed pattern images loading - all images now correctly converted to RGBA format (#9ce52a6)
+  - Resolves mismatched image size errors when loading pattern images
+  - Ensures consistent image format across all image uploads
+
+### Refactor
+* Improved null safety across the web platform
+* Enhanced type safety for JS ↔ Dart conversions
+* More descriptive error messages in the web implementation
+* Example app improvements:
+  - Maps now use responsive sizing (50-60% of screen height)
+  - Removed fixed width constraints for full-screen responsiveness
+  - Better button and control layouts
+
+## [0.24.1](https://github.com/maplibre/flutter-maplibre-gl/compare/v0.24.0...v0.24.1)
+
+* Rollback maplibre-gl to `4.7.1` version. (#660)
+
+## 0.24.0
+
+### Refactor / Quality (web)
+* Refactored `onMapClick` (degenerate bbox + interactive layer filter) so unmanaged style-layer features now trigger `onFeatureTapped` (feature id + layer id, `annotation = null`).
+* Ensured map container stretches vertically by setting `style.height = '100%'` on the registered div to avoid zero-height issues in flexible layouts.
+
+## 0.23.0
+
+> Note: This release has breaking changes.
+
+see top-level CHANGELOG.md
+
 ## newer releases
 
 see top-level CHANGELOG.md
