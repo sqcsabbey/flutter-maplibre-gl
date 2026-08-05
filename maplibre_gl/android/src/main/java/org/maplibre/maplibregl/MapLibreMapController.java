@@ -781,8 +781,7 @@ final class MapLibreMapController
   }
 
   private Expression parseFilter(String filter) {
-    JsonParser parser = new JsonParser();
-    JsonElement filterJsonElement = parser.parse(filter);
+    JsonElement filterJsonElement = JsonParser.parseString(filter);
     return filterJsonElement.isJsonNull() ? null : Expression.Converter.convert(filterJsonElement);
   }
 
@@ -1912,8 +1911,7 @@ final class MapLibreMapController
 
           Layer layer = style.getLayer(layerId);
 
-          JsonParser parser = new JsonParser();
-          JsonElement jsonElement = parser.parse(filter);
+          JsonElement jsonElement = JsonParser.parseString(filter);
           Expression expression = Expression.Converter.convert(jsonElement);
 
           if (layer instanceof CircleLayer) {
