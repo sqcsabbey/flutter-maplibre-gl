@@ -42,11 +42,12 @@ class SourcePropertyConverter {
 
     final Object bounds = data.get("bounds");
     if (bounds != null) {
-      List<Float> boundsFloat = new ArrayList<Float>();
-      for (Object item : Convert.toList(bounds)) {
-        boundsFloat.add(Convert.toFloat(item));
+      List<?> boundsList = Convert.toList(bounds);
+      float[] boundsFloat = new float[boundsList.size()];
+      for (int i = 0; i < boundsList.size(); i++) {
+        boundsFloat[i] = Convert.toFloat(boundsList.get(i));
       }
-      tileSet.setBounds(boundsFloat.toArray(new Float[0]));
+      tileSet.setBounds(boundsFloat);
     }
 
     final Object scheme = data.get("scheme");

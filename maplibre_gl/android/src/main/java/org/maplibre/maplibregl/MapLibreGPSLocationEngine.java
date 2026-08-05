@@ -123,6 +123,7 @@ public class MapLibreGPSLocationEngine implements LocationEngineImpl<LocationLis
         }
 
         @Override
+        @SuppressWarnings("deprecation") // deprecated LocationListener override we must implement
         public void onStatusChanged(String s, int i, Bundle bundle) {
             // noop
         }
