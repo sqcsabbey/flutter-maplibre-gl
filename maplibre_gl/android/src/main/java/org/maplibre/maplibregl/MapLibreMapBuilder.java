@@ -15,6 +15,9 @@ import io.flutter.plugin.common.BinaryMessenger;
 
 class MapLibreMapBuilder implements MapLibreMapOptionsSink {
   public final String TAG = getClass().getSimpleName();
+  // Deprecated no-arg ctor; the replacement createFromAttributes(Context) needs a Context
+  // this builder doesn't hold at field-init time.
+  @SuppressWarnings("deprecation")
   private final MapLibreMapOptions options =
       new MapLibreMapOptions().attributionEnabled(true).logoEnabled(false).textureMode(false);
   private boolean trackCameraPosition = false;

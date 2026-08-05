@@ -1235,7 +1235,7 @@ final class MapLibreMapController
               try {
                 GeoJsonSource source = style.getSourceAs(call.argument("id"));
                 if (source != null) {
-                  source.setUrl((String)call.argument("url"));
+                  source.setUri((String)call.argument("url"));
                   ret = true;
                 }
               } catch (Exception e) {
@@ -2115,7 +2115,7 @@ final class MapLibreMapController
         int snapshotHeight = height != null ? height : mapView.getHeight();
 
         MapSnapshotter.Options options = new MapSnapshotter.Options(snapshotWidth, snapshotHeight)
-                .withStyle(styleUrl)
+                .withStyleBuilder(new Style.Builder().fromUri(styleUrl))
                 .withCameraPosition(mapLibreMap.getCameraPosition());
         if (activeSnapshotter != null) {
           activeSnapshotter.cancel();
@@ -2452,6 +2452,7 @@ final class MapLibreMapController
   }
 
   @Override
+  @SuppressWarnings("deprecation") // onLowMemory is a deprecated ComponentCallbacks override we must implement
   public void onLowMemory() {
     if (disposed || mapView == null) {
       return;
