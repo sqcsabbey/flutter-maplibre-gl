@@ -92,10 +92,19 @@ abstract class AnnotationManager<T extends Annotation> {
       for (var i = 0; i < allLayerProperties.length; i++) {
         final layerId = _makeLayerId(i);
 
-        await controller.addGeoJsonSource(
+        await controller.addSource(
           layerId,
-          buildFeatureCollection([]),
-          promoteId: "id",
+          const GeojsonSourceProperties(
+            data: {"type": "FeatureCollection", "features": []},
+            promoteId: "id",
+            // Geojson sources tile their data only down to the style-spec
+            // default maxzoom of 18; past that the renderer magnifies
+            // overzoomed z18 tiles, whose quantization and Douglas-Peucker
+            // simplification visibly deform dense geometry (a tessellated
+            // circle renders as an octagon). Tile to z24 so annotations
+            // survive the deepest zooms apps use.
+            maxzoom: 24,
+          ),
         );
         await _addManagerLayer(i);
       }

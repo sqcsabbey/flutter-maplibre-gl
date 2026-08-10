@@ -102,12 +102,16 @@ class SourcePropertyConverter {
       options = options.withLineMetrics(Convert.toBoolean(lineMetrics));
     }
 
-    final Object maxZoom = data.get("maxZoom");
+    // The style spec (and GeojsonSourceProperties.toJson) uses lowercase
+    // "maxzoom"/"minzoom"; the camelCase forms are kept for compatibility.
+    final Object maxZoom =
+        data.get("maxZoom") != null ? data.get("maxZoom") : data.get("maxzoom");
     if (maxZoom != null) {
       options = options.withMaxZoom(Convert.toInt(maxZoom));
     }
 
-    final Object minZoom = data.get("minZoom");
+    final Object minZoom =
+        data.get("minZoom") != null ? data.get("minZoom") : data.get("minzoom");
     if (minZoom != null) {
       options = options.withMinZoom(Convert.toInt(minZoom));
     }
