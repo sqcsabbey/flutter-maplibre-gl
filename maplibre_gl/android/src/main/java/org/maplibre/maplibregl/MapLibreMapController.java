@@ -160,7 +160,11 @@ final class MapLibreMapController
   private MapSnapshotter activeSnapshotter;
 
   private Set<String> interactiveFeatureLayerIds;
-  private Map<String, FeatureCollection> addedFeaturesByLayer;
+  // Raw FeatureCollection JSON per source, retained only for
+  // setGeoJsonFeature's read-modify-write. Kept as strings: parsed Java
+  // model objects of a large annotation source (every annotation travels in
+  // one payload) are several times the string's size and OOM the heap.
+  private Map<String, String> addedFeaturesByLayer;
 
   private LatLngBounds bounds = null;
   Style.OnStyleLoaded onStyleLoadedCallback =
@@ -207,7 +211,7 @@ final class MapLibreMapController
     this.mapViewContainer = new FrameLayout(context);
     this.mapView = new MapView(context, options);
     this.interactiveFeatureLayerIds = new HashSet<>();
-    this.addedFeaturesByLayer = new HashMap<String, FeatureCollection>();
+    this.addedFeaturesByLayer = new HashMap<String, String>();
     this.density = context.getResources().getDisplayMetrics().density;
     this.lifecycleProvider = lifecycleProvider;
     if (dragEnabled) {
@@ -482,17 +486,37 @@ final class MapLibreMapController
     methodChannel.invokeMethod("map#onUserLocationUpdated", arguments);
   }
 
-  private FeatureCollection parseGeoJsonToFeatureCollection(String geojson) {
-    JsonElement jsonElement = JsonParser.parseString(geojson);
-    String type = jsonElement.getAsJsonObject().get("type").getAsString();
+  // Top-level "type" of the geojson, read with a streaming parser — a tree
+  // parse of a large FeatureCollection just to sniff its type allocates
+  // multiples of the payload.
+  private static String peekGeoJsonType(String geojson) {
+    try (com.google.gson.stream.JsonReader reader =
+        new com.google.gson.stream.JsonReader(new java.io.StringReader(geojson))) {
+      reader.beginObject();
+      while (reader.hasNext()) {
+        if ("type".equals(reader.nextName())) {
+          return reader.nextString();
+        }
+        reader.skipValue();
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "peekGeoJsonType: unparseable geojson", e);
+    }
+    return null;
+  }
 
+  // The geojson as FeatureCollection JSON — pass-through for collections, a
+  // single Feature gets wrapped — handed to GeoJsonSource as a string so
+  // parsing happens natively instead of materializing Java model objects.
+  // Null for unsupported types.
+  private static String asFeatureCollectionJson(String geojson) {
+    String type = peekGeoJsonType(geojson);
     if ("FeatureCollection".equals(type)) {
-      return FeatureCollection.fromJson(geojson);
+      return geojson;
     } else if ("Feature".equals(type)) {
       Feature feature = Feature.fromJson(geojson);
-      return FeatureCollection.fromFeatures(new Feature[]{ feature });
+      return FeatureCollection.fromFeatures(new Feature[]{ feature }).toJson();
     }
-
     return null;
   }
 
@@ -509,8 +533,8 @@ final class MapLibreMapController
     }
 
     try {
-      FeatureCollection featureCollection = parseGeoJsonToFeatureCollection(source);
-      if (featureCollection == null) {
+      String featureCollectionJson = asFeatureCollectionJson(source);
+      if (featureCollectionJson == null) {
         Log.w(TAG, "addGeoJsonSource: unsupported GeoJSON type, skipping");
         return;
       }
@@ -519,8 +543,8 @@ final class MapLibreMapController
       // that silently discards icons registered via addImage() in the same render frame.
       // Disabled unconditionally until upstream maplibre-native#4326 is fixed.
       GeoJsonOptions options = new GeoJsonOptions().withSynchronousUpdate(false);
-      GeoJsonSource geoJsonSource = new GeoJsonSource(sourceName, featureCollection, options);
-      addedFeaturesByLayer.put(sourceName, featureCollection);
+      GeoJsonSource geoJsonSource = new GeoJsonSource(sourceName, featureCollectionJson, options);
+      addedFeaturesByLayer.put(sourceName, featureCollectionJson);
 
       style.addSource(geoJsonSource);
     } catch (Exception e) {
@@ -535,8 +559,8 @@ final class MapLibreMapController
     }
 
     try {
-      FeatureCollection featureCollection = parseGeoJsonToFeatureCollection(geojson);
-      if (featureCollection == null) {
+      String featureCollectionJson = asFeatureCollectionJson(geojson);
+      if (featureCollectionJson == null) {
         Log.w(TAG, "setGeoJsonSource: unsupported GeoJSON type, skipping update");
         return;
       }
@@ -547,8 +571,8 @@ final class MapLibreMapController
         return;
       }
 
-      addedFeaturesByLayer.put(sourceName, featureCollection);
-      geoJsonSource.setGeoJson(featureCollection);
+      addedFeaturesByLayer.put(sourceName, featureCollectionJson);
+      geoJsonSource.setGeoJson(featureCollectionJson);
     } catch (Exception e) {
       Log.e(TAG, "setGeoJsonSource: error updating source '" + sourceName + "'", e);
     }
@@ -562,13 +586,17 @@ final class MapLibreMapController
 
     try {
       Feature feature = Feature.fromJson(geojsonFeature);
-      FeatureCollection featureCollection = addedFeaturesByLayer.get(sourceName);
+      String retainedJson = addedFeaturesByLayer.get(sourceName);
       GeoJsonSource geoJsonSource = style.getSourceAs(sourceName);
 
-      if (featureCollection != null && geoJsonSource != null) {
+      if (retainedJson != null && geoJsonSource != null) {
+        // Parse-modify-serialize per update: only dragging comes through
+        // here, on sources small enough to drag, so the transient parse is
+        // acceptable where retaining every source parsed is not.
+        FeatureCollection featureCollection = FeatureCollection.fromJson(retainedJson);
         final String featureId = feature.id();
         final List<Feature> features = featureCollection.features();
-        
+
         if (featureId != null && features != null) {
           for (int i = 0; i < features.size(); i++) {
             if (featureId.equals(features.get(i).id())) {
@@ -578,7 +606,9 @@ final class MapLibreMapController
           }
         }
 
-        geoJsonSource.setGeoJson(featureCollection);
+        String updatedJson = featureCollection.toJson();
+        addedFeaturesByLayer.put(sourceName, updatedJson);
+        geoJsonSource.setGeoJson(updatedJson);
       }
     } catch (Exception e) {
       Log.e(TAG, "setGeoJsonFeature: error updating feature in source '" + sourceName + "'", e);
