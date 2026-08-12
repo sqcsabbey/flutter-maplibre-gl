@@ -26,7 +26,12 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
     private var isAdjustingCameraProgrammatically = false
 
     private var interactiveFeatureLayerIds = Set<String>()
-    private var addedShapesByLayer = [String: MLNShape]()
+    // Raw FeatureCollection JSON per source, retained only for setFeature's
+    // read-modify-write. Kept as strings: the parsed MLNShape feature tree
+    // of a large annotation source (every annotation travels in one payload)
+    // is several times the string's size and permanent ballast — the source
+    // itself already holds the geometry natively.
+    private var addedShapeJsonByLayer = [String: String]()
 
     private var doubleTapRecognizers: [UITapGestureRecognizer] = []
 
@@ -1574,7 +1579,7 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
             mapView.setCamera(camera, animated: false)
         }
 
-        addedShapesByLayer.removeAll()
+        addedShapeJsonByLayer.removeAll()
         interactiveFeatureLayerIds.removeAll()
 
         mapReadyResult?(nil)
@@ -2079,7 +2084,7 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
                 encoding: String.Encoding.utf8.rawValue
             )
             let source = MLNShapeSource(identifier: sourceId, shape: parsed, options: [:])
-            addedShapesByLayer[sourceId] = parsed
+            addedShapeJsonByLayer[sourceId] = geojson
             style.addSource(source)
             return .success(())
         } catch {
@@ -2100,7 +2105,7 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
             guard let source = style.source(withIdentifier: sourceId) as? MLNShapeSource else {
                 return .failure(.sourceNotFound(sourceId: sourceId))
             }
-            addedShapesByLayer[sourceId] = parsed
+            addedShapeJsonByLayer[sourceId] = geojson
             source.shape = parsed
             return .success(())
         }catch{
@@ -2122,7 +2127,14 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
             guard let source = style.source(withIdentifier: sourceId) as? MLNShapeSource else {
                 return .failure(.sourceNotFound(sourceId: sourceId))
             }
-            if let shape = addedShapesByLayer[sourceId] as? MLNShapeCollectionFeature,
+            // Parse-modify-serialize per update: only dragging comes through
+            // here, on sources small enough to drag, so the transient parse
+            // is acceptable where retaining every source parsed is not.
+            if let retainedJson = addedShapeJsonByLayer[sourceId],
+               let shape = try MLNShape(
+                   data: retainedJson.data(using: .utf8)!,
+                   encoding: String.Encoding.utf8.rawValue
+               ) as? MLNShapeCollectionFeature,
                let feature = newShape as? MLNShape & MLNFeature
             {
                 if let index = shape.shapes
@@ -2141,9 +2153,20 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
                     shapes[index] = feature
 
                     source.shape = MLNShapeCollectionFeature(shapes: shapes)
+
+                    let featureDicts = shapes.compactMap {
+                        ($0 as? MLNFeature)?.geoJSONDictionary()
+                    }
+                    let collectionDict: [String: Any] = [
+                        "type": "FeatureCollection",
+                        "features": featureDicts,
+                    ]
+                    let collectionData = try JSONSerialization.data(withJSONObject: collectionDict)
+                    if let collectionJson = String(data: collectionData, encoding: .utf8) {
+                        addedShapeJsonByLayer[sourceId] = collectionJson
+                    }
                 }
 
-                addedShapesByLayer[sourceId] = source.shape
                 return .success(())
             }
             return .failure(.genericError(details: "Failed to set feature for sourceId \(sourceId)"))
@@ -2220,7 +2243,7 @@ class MapLibreMapController: NSObject, FlutterPlatformView, MLNMapViewDelegate, 
 
     func setStyleString(styleString: String) {
         interactiveFeatureLayerIds.removeAll()
-        addedShapesByLayer.removeAll()
+        addedShapeJsonByLayer.removeAll()
         
         if Self.styleStringIsJSON(styleString) {
             mapView.styleJSON = styleString
